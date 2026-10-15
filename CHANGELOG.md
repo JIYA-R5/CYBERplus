@@ -7,6 +7,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] - 2026-10-15
 
+### Stage 4: Google Gemini AI Integration & Safe Fallback
+#### Added
+- **Google GenAI Client Integration**: Upgraded `explainerAI.py` with official `google.genai` SDK support, connecting to `gemini-2.5-flash` for live incident explanations.
+- **Pydantic Validation Contract**: Introduced `ThreatExplanation` model enforcing strict schema validation (`summary`, `mechanism`, `potential_impact`, `mitre_technique`, `investigation_steps`, `containment_recommendations`, `provider`, `ai_disclaimer`).
+- **Deterministic Local Fallback**: Provided comprehensive offline knowledge base with forensic investigation checklists and containment recommendations, ensuring 100% operational reliability when `GEMINI_API_KEY` is missing or the system is offline.
+- **Compliance & Attribution Labels**: Added explicit provider attribution (`google_gemini` vs `local_rule_fallback`) and human-in-the-loop validation disclaimers.
+- **Automated Tests**: Added `tests/test_explainer.py` covering fallback contracts, all attack categories, API error resilience, and executive summary generation.
+
+#### Verified
+- Ran full test suite via `pytest -v tests/`: **14 passed in 2.48s (100% pass rate)**.
+
+---
+
 ### Stage 3: Robust Behavioral Detection Engine & Automated Test Suite
 #### Added
 - **Stateful Multi-Event Temporal Correlation**: Implemented `ThreatDetector.correlate_incidents()` to detect distributed port scanning across distinct ports, repeated brute-force authentication attacks on administrative services, and aggregated volumetric surges.
