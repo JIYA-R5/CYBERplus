@@ -1,1 +1,11 @@
-//store sample traffic
+Time,Source IP,Activity,Risk,Packets,Port
+10:00:01,192.168.1.10,Normal Traffic,Low,120,443
+10:00:05,192.168.1.15,Port Scan,High,450,80
+10:00:08,192.168.1.33,Suspicious Reconnaissance,Medium,210,135
+10:00:10,192.168.1.20,Normal Traffic,Low,150,53
+10:00:15,192.168.1.15,Brute Force,High,380,22
+10:00:18,192.168.1.42,Data Exfiltration,High,520,443
+10:00:20,192.168.1.25,Normal Traffic,Low,100,80
+10:00:24,192.168.1.99,DDoS Flood,Critical,920,8080
+10:00:28,192.168.1.12,Normal Traffic,Low,140,443
+10:00:30,192.168.1.18,Normal Traffic,Low,110,53
