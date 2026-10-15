@@ -7,6 +7,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] - 2026-10-15
 
+### Stage 3: Robust Behavioral Detection Engine & Automated Test Suite
+#### Added
+- **Stateful Multi-Event Temporal Correlation**: Implemented `ThreatDetector.correlate_incidents()` to detect distributed port scanning across distinct ports, repeated brute-force authentication attacks on administrative services, and aggregated volumetric surges.
+- **Structured Incident Contract**: Created `Incident` dataclass defining professional SOC fields (`incident_id`, `category`, `source_ip`, `destination_ip`, `destination_ports`, `severity`, `confidence`, `rule_id`, `mitre_id`, `evidence`, `recommended_action`, `status`).
+- **Machine Learning Anomaly Classifier**: Added `MLAnomalyDetector` using Scikit-Learn `IsolationForest` to generate transparent continuous anomaly scores, clearly segregated from deterministic rule-based classifications.
+- **Resilient Input Validation**: Hardened against missing fields, non-numeric packet values, empty/NaN rows, and malicious IP injection strings.
+- **Automated Test Suite**: Added `tests/test_detector.py` covering normal nominal traffic, volumetric DDoS, single-flow brute force, known signatures, stateful port scan correlation, stateful brute force correlation, DataFrame backward compatibility, malformed data handling, and ML anomaly detection.
+- **Configuration**: Added `pytest.ini` with `pythonpath = .`.
+
+#### Verified
+- Ran full test suite via `pytest -v tests/test_detector.py`: **9 passed in 5.61s (100% pass rate)**.
+- Verified end-to-end compatibility with `sample_traafic.csv` pipeline.
+
+---
+
 ### Stage 2: Bug Fixes, Project Clean-Up & Environment Setup
 #### Added
 - **`response_engine.py`**: Created canonical response engine module with strict IP sanitization (`ipaddress.ip_address`), prevention of command injection, reversible containment rollback scripts, and multi-tier response playbooks.
