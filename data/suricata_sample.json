@@ -1,0 +1,4 @@
+{"timestamp": "2026-10-15T10:00:01.123456+0000", "event_type": "flow", "src_ip": "192.168.1.10", "dest_ip": "10.0.0.1", "src_port": 51234, "dest_port": 443, "proto": "TCP", "flow": {"pkts_toserver": 75, "pkts_toclient": 85}}
+{"timestamp": "2026-10-15T10:00:05.654321+0000", "event_type": "alert", "src_ip": "192.168.1.155", "dest_ip": "10.0.0.1", "src_port": 49152, "dest_port": 22, "proto": "TCP", "alert": {"signature": "ET SCAN Potential SSH Brute Force Ingress", "severity": 1}}
+{"timestamp": "2026-10-15T10:00:10.789012+0000", "event_type": "alert", "src_ip": "192.168.1.155", "dest_ip": "10.0.0.1", "src_port": 49153, "dest_port": 80, "proto": "TCP", "alert": {"signature": "ET SCAN Suspicious Port Sweep", "severity": 2}}
+{"timestamp": "2026-10-15T10:00:15.345678+0000", "event_type": "flow", "src_ip": "192.168.1.250", "dest_ip": "10.0.0.5", "src_port": 58921, "dest_port": 8080, "proto": "TCP", "flow": {"pkts_toserver": 940, "pkts_toclient": 10}}

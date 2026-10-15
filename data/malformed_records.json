@@ -1,0 +1,5 @@
+[
+  {"time": "11:00:01", "src_ip": "192.168.1.50", "port": 443, "packets": 120, "activity": "Normal Traffic"},
+  {"invalid_record": true, "corrupt": "missing required fields"},
+  {"time": "11:00:05", "src_ip": "192.168.1.1; rm -rf /", "port": "not_a_port", "packets": "corrupt_number", "activity": "Normal Traffic"}
+]

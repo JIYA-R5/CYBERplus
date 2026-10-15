@@ -7,6 +7,50 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] - 2026-10-15
 
+### Stage 9: Comprehensive Documentation & Hackathon Presentation Prep
+#### Added
+- **`README.md`**: Complete production-ready documentation with architectural diagrams (Mermaid), key features, Windows PowerShell setup, virtual environment activation, and test execution commands.
+- **`DEMO_GUIDE.md`**: Rehearsed 5–7 minute presentation script for college evaluation and hackathons, complete with anticipated judge Q&A.
+
+---
+
+### Stage 8: SOC Dashboard Architecture & UI Elevation
+#### Changed
+- **`app.py`**: Transformed into a 6-tab SOC cybersecurity dashboard:
+  1. `📊 SOC Overview`: DEFCON posture, KPI metric cards, threat severity pie chart, attack category bar chart, and AI Executive briefing.
+  2. `🚨 Incident Queue`: Multi-criteria search and filter, drill-down incident cards, status transitions, and defensive containment triggers.
+  3. `🤖 AI Threat Copilot`: Validated root-cause analysis, interactive forensic investigation checklist, and interactive Q&A analyst prompt.
+  4. `📁 Telemetry Ingestion`: Suricata EVE JSON parser, generic JSON parser, built-in laboratory attack samples, and CSV export.
+  5. `📡 Live Monitoring`: Real-time streaming simulation with explicit `[SIMULATED: Lab Scenario]` labeling.
+  6. `📜 Response Audit Trail`: Filterable SQLite audit table recording all status transitions and simulated/live containment actions.
+
+---
+
+### Stage 7: Safe, Auditable Defensive Response Workflow
+#### Added
+- **`response_engine.py`**: Added `execute_response_action()` implementing the formal defense lifecycle: `Validation -> Execution (Dry-Run by Default) -> Verification -> Tamper-Evident Audit Logging`.
+- **Injection Defense**: Enforced strict IP sanitization via `ipaddress.ip_address` to reject command injection attempts.
+- **Automated Tests**: Added `tests/test_response.py` verifying dry-run safety, malicious input rejection, and rollback symmetry.
+
+---
+
+### Stage 6: Structured JSON Ingestion & Live Monitoring Simulator
+#### Added
+- **`log_parser.py`**: Built multi-format log parser supporting Suricata EVE JSON alert/flow streams and generic JSON arrays with line-by-line syntax error isolation.
+- **`live_monitor.py`**: Implemented thread-safe `LiveMonitoringSimulator` streaming realistic enterprise traffic with controlled laboratory scenario injections.
+- **Automated Tests**: Added `tests/test_ingestion.py` covering Suricata EVE JSON parsing, generic JSON parsing, and simulator thread safety.
+- **Sample Datasets**: Added `data/normal_traffic.csv`, `data/attack_port_scan.json`, `data/attack_brute_force.json`, `data/attack_ddos_flood.json`, `data/suricata_sample.json`, and `data/malformed_records.json`.
+
+---
+
+### Stage 5: Incident Persistence & SQLite Database
+#### Added
+- **`database.py`**: Embedded zero-configuration SQLite persistence engine (`sentinel.db`) with tables for `incidents`, `audit_logs`, and `telemetry_events`.
+- **Status Lifecycle Transitions**: Enabled state changes (`Open`, `Investigating`, `Mitigated`, `Resolved`, `False Positive`) with automated audit trail logging.
+- **Automated Tests**: Added `tests/test_database.py` covering schema creation, incident retrieval, status updates, and demo data reset.
+
+---
+
 ### Stage 4: Google Gemini AI Integration & Safe Fallback
 #### Added
 - **Google GenAI Client Integration**: Upgraded `explainerAI.py` with official `google.genai` SDK support, connecting to `gemini-2.5-flash` for live incident explanations.

@@ -14,3 +14,8 @@ env/
 
 # Streamlit config / cache
 .streamlit/secrets.toml
+
+# SQLite Database Files
+*.db
+*.sqlite
+*.sqlite3

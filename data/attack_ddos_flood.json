@@ -1,0 +1,5 @@
+[
+  {"time": "10:30:01", "source_ip": "192.168.1.250", "destination_ip": "10.0.0.5", "port": 8080, "packets": 920, "activity": "DDoS Flood", "risk": "Critical"},
+  {"time": "10:30:03", "source_ip": "192.168.1.250", "destination_ip": "10.0.0.5", "port": 8080, "packets": 1150, "activity": "DDoS Flood", "risk": "Critical"},
+  {"time": "10:30:05", "source_ip": "192.168.1.250", "destination_ip": "10.0.0.5", "port": 8080, "packets": 980, "activity": "DDoS Flood", "risk": "Critical"}
+]
