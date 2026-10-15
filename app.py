@@ -8,7 +8,7 @@ import plotly.express as px
 from detector import ThreatDetector, get_detector
 from analyzer import TrafficAnalyzer, get_analyzer
 from explainerAI import ThreatExplainer, get_explainer
-from response_enigne import ResponseEngine, get_response_engine
+from response_engine import ResponseEngine, get_response_engine
 
 # Page configuration
 st.set_page_config(

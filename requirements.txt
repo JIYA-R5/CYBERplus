@@ -1,5 +1,23 @@
-# Python libraries required by SentinelAI
+# SentinelAI - Python Package Dependencies
+
+# Core Web Dashboard & Visualization
 streamlit>=1.30.0
-pandas>=2.0.0
 plotly>=5.18.0
+
+# Telemetry Data Manipulation & Numerics
+pandas>=2.0.0
 numpy>=1.24.0
+
+# AI Threat Explainer & LLM Integration
+google-genai>=0.8.0
+google-generativeai>=0.8.0
+
+# Environment Configuration & Schema Validation
+python-dotenv>=1.0.0
+pydantic>=2.5.0
+
+# Statistical Modeling & Machine Learning
+scikit-learn>=1.3.0
+
+# Automated Testing & Verification
+pytest>=7.4.0
