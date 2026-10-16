@@ -12,6 +12,12 @@ env/
 .vscode/
 .idea/
 
+# Environment variables & local secrets
+.env
+.env.local
+.env.*.local
+*.env
+
 # Streamlit config / cache
 .streamlit/secrets.toml
 
@@ -19,3 +25,7 @@ env/
 *.db
 *.sqlite
 *.sqlite3
+
+# Markdown documentation (exclude all .md files except README.md)
+*.md
+!README.md
