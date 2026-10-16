@@ -21,8 +21,20 @@ class DatabaseManager:
 
     def __init__(self, db_path: Optional[str] = None):
         if db_path is None:
-            base_dir = os.path.dirname(__file__)
-            self.db_path = os.path.join(base_dir, "sentinel.db")
+            if os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):
+                tmp_dir = "/tmp"
+                self.db_path = os.path.join(tmp_dir, "sentinel.db")
+                base_dir = os.path.dirname(__file__)
+                orig_db = os.path.join(base_dir, "sentinel.db")
+                if os.path.exists(orig_db) and not os.path.exists(self.db_path):
+                    import shutil
+                    try:
+                        shutil.copy2(orig_db, self.db_path)
+                    except Exception:
+                        pass
+            else:
+                base_dir = os.path.dirname(__file__)
+                self.db_path = os.path.join(base_dir, "sentinel.db")
         else:
             self.db_path = db_path
         self._init_db()

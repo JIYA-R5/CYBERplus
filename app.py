@@ -589,3 +589,13 @@ with tabs[5]:
         st.download_button("📥 Export Audit Log (CSV)", data=audit_csv, file_name="sentinel_audit_log.csv", mime="text/csv")
 
 st.caption("SentinelAI v2.5 | Multi-Tier Threat Detection, Gemini Copilot & Safe Incident Response")
+
+# ==============================================================================
+# VERCEL SERVERLESS RUNTIME ENTRYPOINT EXPORT
+# ==============================================================================
+# When imported outside of Streamlit (e.g. by Vercel serverless build/runtime),
+# expose the FastAPI ASGI application so Vercel never errors on [PYTHON_ENTRYPOINT_NOT_FOUND].
+try:
+    from api.index import app  # noqa: F401
+except Exception:
+    pass
