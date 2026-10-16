@@ -2,7 +2,7 @@
 
 [![Python Version](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/)
 [![Framework](https://img.shields.io/badge/Streamlit-1.65+-FF4B4B.svg)](https://streamlit.io/)
-[![Testing](https://img.shields.io/badge/Pytest-25%20Passed-brightgreen.svg)](https://pytest.org/)
+[![Testing](https://img.shields.io/badge/Pytest-31%20Passed-brightgreen.svg)](https://pytest.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 SentinelAI is an autonomous, defensive cybersecurity telemetry monitoring, threat detection, and incident response platform. It analyzes network logs and structured security events, correlates multi-event attack behaviors (Port Scans, Brute Force, Volumetric DDoS, and Data Exfiltration), delivers root-cause forensic explanations via **Google Gemini GenAI**, and orchestrates safe, auditable incident containment.
@@ -32,12 +32,22 @@ graph TD
 
 ## 🚀 Key Features
 
-1. **Multi-Tier Intrusion Detection Engine:**
-   - **Stateful Multi-Port Scan Detection (`T1046`):** Identifies distributed port probing across distinct destination ports in configurable time windows.
-   - **Brute Force Authentication Tracker (`T1110`):** Correlates repeated connection attempts and credential guessing against administrative ports (`22 SSH`, `3389 RDP`, `445 SMB`, `8080`).
-   - **Volumetric DDoS Mitigation (`T1498`):** Flags link-saturating surges exceeding critical capacity thresholds.
+1. **Multi-Tier Intrusion Detection & Stateful Correlation:**
+   - **Stateful Multi-Port Scan Detection (`T1046`):** Identifies distributed port probing across distinct destination ports in configurable time windows (`PORT_SCAN_THRESHOLD`, default 3).
+   - **Brute Force Authentication Tracker (`T1110`):** Tracks repeated connection attempts and credential failures targeting specific administrative ports (`22 SSH`, `3389 RDP`, `445 SMB`, `8080`) (`BRUTE_FORCE_THRESHOLD`, default 3). Evaluates attempts *per service* to eliminate false-positive overlap with port scans.
+   - **Unusual Traffic Burst Detection (`T1499`):** Detects concentrated micro-bursts and request surges to application endpoints (`BURST_FLOW_THRESHOLD`, default 5). Strictly segregated from volumetric DDoS.
+   - **Volumetric DDoS Mitigation (`T1498`):** Flags link-saturating surges exceeding critical capacity thresholds (`CRITICAL_PACKET_THRESHOLD`, default 800).
    - **Data Exfiltration Detection (`T1048`):** Identifies anomalous bulk outbound transfers directed towards untrusted external IPs.
    - **Optional Machine Learning Anomaly Scorer:** Scikit-Learn `IsolationForest` generates continuous anomaly deviation scores, clearly segregated from rule-based classifications.
+
+2. **Incident Grouping & Confidence Scoring Rubric:**
+   - **Stateful Multi-Event Correlation:** Groups related raw probe events (e.g., 14 port probes from the same source) into a single unified security incident with supporting event linkage rather than flooding analysts with isolated alerts.
+   - **Transparent Confidence Rubric:**
+     - `0.50`: Baseline nominal traffic within operational bounds.
+     - `0.70 - 0.79`: Single-flow anomaly indicator (unusual port or moderate packet surge).
+     - `0.80 - 0.89`: Rule threshold breach across multiple flows within temporal sliding window.
+     - `0.90 - 0.95`: Corroborated multi-flow burst or high-frequency attempt rate.
+     - `0.96 - 0.99`: Confirmed multi-probe attack (10+ distinct ports or 10+ failed authentications) corroborated by IDS alert signatures.
 
 2. **Google Gemini GenAI Threat Copilot:**
    - Uses `gemini-2.5-flash` via the official `google-genai` SDK to generate structured root-cause analyses, technical attack mechanisms, potential business impacts, and interactive forensic investigation checklists.
@@ -100,14 +110,14 @@ RESPONSE_MODE=dry_run
 
 ## 🧪 Running Automated Tests
 
-SentinelAI includes 25 unit and integration tests covering detection rules, temporal correlation, machine learning, AI fallback, log ingestion, and response workflows.
+SentinelAI includes 31 unit and integration tests covering detection rules, temporal correlation, machine learning, AI fallback, log ingestion, response workflows, and the 73-record audit scenario suite.
 
 ```powershell
 pytest -v
 ```
 **Expected Output:**
 ```text
-============================= 25 passed in 3.35s =============================
+============================= 31 passed in 3.34s =============================
 ```
 
 ---
@@ -141,14 +151,17 @@ CYBERplus/
 ├── IMPLEMENTATION_PLAN.md     # 9-stage technical roadmap
 ├── CHANGELOG.md               # Version-controlled modification log
 ├── DEMO_GUIDE.md              # 5-7 minute presentation script for hackathons
+├── sentinel_enriched_telemetry.csv  # Verified 73-record exported audit report
 ├── data/                      # Test datasets
+│   ├── sentinelai_suricata_eve_sample.json  # 73-record security audit log
+│   ├── sentinel_enriched_telemetry_audit.csv # Exported enriched telemetry
 │   ├── normal_traffic.csv
 │   ├── attack_port_scan.json
 │   ├── attack_brute_force.json
 │   ├── attack_ddos_flood.json
 │   ├── suricata_sample.json
 │   └── malformed_records.json
-└── tests/                     # Automated Pytest suite (25 tests)
+└── tests/                     # Automated Pytest suite (31 tests)
     ├── test_detector.py
     ├── test_explainer.py
     ├── test_database.py

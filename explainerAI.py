@@ -216,6 +216,32 @@ class ThreatExplainer:
                     "Apply bandwidth rate-limiting on offending host.",
                     "Schedule heavy administrative jobs during off-peak hours."
                 ]
+            },
+            "Traffic Burst": {
+                "summary": (
+                    "Unusual concentration of request flows directed toward an application service endpoint. "
+                    "Indicates an automated request spike, scraping, or micro-burst testing service limits."
+                ),
+                "mechanism": (
+                    "Rapid transmission of HTTP/application requests to a single destination port within a tight time window, "
+                    "exceeding normal baseline without saturating network link bandwidth."
+                ),
+                "potential_impact": (
+                    "Degraded web application responsiveness, backend database queue saturation, or HTTP thread pool exhaustion."
+                ),
+                "mitre_technique": "T1499 - Endpoint Denial of Service: Application or Service Exhaustion",
+                "recommended_focus": "Inspect web server access logs (HTTP status codes, User-Agent, URI paths) and evaluate rate-limiting rules.",
+                "investigation_steps": [
+                    "Examine web application access logs for targeted URI endpoints (e.g. login, search, API routes).",
+                    "Check client User-Agent strings and TLS fingerprinting for automated headless tools or scripts.",
+                    "Verify if source IPs belong to a distributed proxy pool or single autonomous system.",
+                    "Review server application metrics (worker process CPU, memory, request response latency)."
+                ],
+                "containment_recommendations": [
+                    "Deploy HTTP rate-limiting / throttling at reverse proxy or WAF layer.",
+                    "Activate CAPTCHA challenges or challenge-response verification for aggressive endpoints.",
+                    "Apply temporary IP connection limits in firewall / load balancer configuration."
+                ]
             }
         }
 

@@ -453,6 +453,7 @@ with tabs[3]:
             "Select Pre-configured Sample Dataset",
             [
                 "Baseline Dataset (sample_traafic.csv)",
+                "Suricata EVE 73-Record Security Audit Stream (sentinelai_suricata_eve_sample.json)",
                 "Suricata EVE JSON Alert Stream (suricata_sample.json)",
                 "Simulated Port Scan Attack (attack_port_scan.json)",
                 "Simulated Brute Force Attack (attack_brute_force.json)",
@@ -466,6 +467,7 @@ with tabs[3]:
             data_dir = os.path.join(os.path.dirname(__file__), "data")
             file_map = {
                 "Baseline Dataset (sample_traafic.csv)": os.path.join(os.path.dirname(__file__), "sample_traafic.csv"),
+                "Suricata EVE 73-Record Security Audit Stream (sentinelai_suricata_eve_sample.json)": os.path.join(data_dir, "sentinelai_suricata_eve_sample.json"),
                 "Suricata EVE JSON Alert Stream (suricata_sample.json)": os.path.join(data_dir, "suricata_sample.json"),
                 "Simulated Port Scan Attack (attack_port_scan.json)": os.path.join(data_dir, "attack_port_scan.json"),
                 "Simulated Brute Force Attack (attack_brute_force.json)": os.path.join(data_dir, "attack_brute_force.json"),

@@ -104,14 +104,41 @@ class LogParser:
                 errors.append(f"Record {idx} is not a valid JSON object.")
                 continue
 
+            # Extract activity and risk, supporting both flat schemas and nested alert objects
+            activity = item.get("activity")
+            risk = item.get("risk")
+
+            if not activity and "alert" in item and isinstance(item["alert"], dict):
+                activity = item["alert"].get("signature", "Suricata Alert")
+                if not risk:
+                    sev = item["alert"].get("severity", 3)
+                    risk = "Critical" if sev == 1 else ("High" if sev == 2 else "Medium")
+
+            # Extract packet count, checking top-level packets or nested flow object
+            raw_pkts = item.get("packets", item.get("pkts"))
+            if raw_pkts is not None and str(raw_pkts).isdigit():
+                packets = int(raw_pkts)
+            elif "flow" in item and isinstance(item["flow"], dict):
+                packets = item["flow"].get("pkts_toserver", 1) + item["flow"].get("pkts_toclient", 0)
+            else:
+                packets = 100
+
+            # Safe port extraction
+            raw_port = item.get("port", item.get("dest_port", 80))
+            try:
+                parsed_port = int(float(raw_port))
+                port_val = parsed_port if 1 <= parsed_port <= 65535 else 80
+            except (ValueError, TypeError):
+                port_val = 80
+
             events.append({
                 "Time": str(item.get("time", item.get("timestamp", "N/A"))),
                 "Source IP": str(item.get("source_ip", item.get("src_ip", "0.0.0.0"))),
                 "Destination IP": str(item.get("destination_ip", item.get("dest_ip", "10.0.0.1"))),
-                "Port": int(item.get("port", item.get("dest_port", 80))) if str(item.get("port", item.get("dest_port", ""))).isdigit() else 80,
-                "Packets": int(item.get("packets", item.get("pkts", 100))) if str(item.get("packets", item.get("pkts", ""))).isdigit() else 100,
-                "Activity": str(item.get("activity", "Normal Traffic")),
-                "Risk": str(item.get("risk", "Low")),
+                "Port": port_val,
+                "Packets": int(packets),
+                "Activity": str(activity or "Normal Traffic"),
+                "Risk": str(risk or "Low"),
                 "Log Format": "Generic JSON"
             })
 

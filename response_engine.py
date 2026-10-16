@@ -91,6 +91,16 @@ class ResponseEngine:
                     "Observe traffic pattern for continuous volumetric growth.",
                 ],
                 "recommended_policy": "Monitor and rate-limit flow."
+            },
+            "Traffic Burst": {
+                "priority": "P2 - High",
+                "actions": [
+                    "Inspect web server access logs for anomalous request rates or scraping behavior.",
+                    "Activate reverse proxy / WAF rate limiting and connection throttling for target service.",
+                    "Temporarily rate-limit or block offending source IP addresses at edge firewall.",
+                    "Verify backend application health, connection pools, and latency metrics."
+                ],
+                "recommended_policy": "Enforce application-layer rate limiting and monitor source IPs."
             }
         }
 

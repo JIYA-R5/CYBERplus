@@ -7,6 +7,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] - 2026-10-15
 
+### Stage 10: Detection Engine & Incident Correlation Hardening (73-Record Audit Resolution)
+#### Fixed
+- **SSH Authentication Failure Detection:** Resolved issue where simulated SSH authentication failure records (port 22) were evaluated as isolated flows with packet counts below heuristic thresholds, causing them to be classified as "Low" risk and not detected. Integrated canonical signature matching, port-specific brute-force tracking, and preserved alert severities (`Critical`/`High`).
+- **HTTP Traffic Burst Detection:** Resolved issue where simulated HTTP traffic bursts (port 80) were missed by single-flow evaluation and not recognized by exact signature dictionaries. Added canonical signature mapping (`Traffic Burst`, `RULE-BURST-01`, `T1499`), configurable flow burst thresholds (`BURST_FLOW_THRESHOLD`, default 5), and correlation without falsely claiming DDoS.
+- **Port Scan & Brute Force False-Positive Overlap:** Fixed bug where port scans probing ports 21, 22, 23 triggered both Port Scan and Brute Force alerts. Enforced per-service authentication failure tracking so multi-port scans (1 attempt per port) are correlated strictly as Port Scans.
+- **Incident Grouping & Linkage:** Correlated supporting events to their unified incident ID in `detect_dataframe`. 14 port probe events now share a single Port Scan incident ID; 12 SSH failure events share a single Brute Force incident ID; 10 traffic burst events share a single Traffic Burst incident ID; nominal flows receive `-`.
+- **Parser Robustness:** Enhanced `LogParser.parse_generic_json` to extract nested alert signatures and severities, extract flow packet counts, and sanitize port numbers (1–65535).
+- **Timestamp & Injection Hardening:** Added `parse_timestamp()` static method to normalize ISO 8601 with mixed offsets, datetime strings, and epoch numbers; reinforced IP sanitization against command injection.
+
+#### Added
+- **Configurable Thresholds:** Enabled environment variable overrides for `PORT_SCAN_THRESHOLD`, `BRUTE_FORCE_THRESHOLD`, `BURST_FLOW_THRESHOLD`, `TIME_WINDOW_SECONDS`, `HIGH_PACKET_THRESHOLD`, and `CRITICAL_PACKET_THRESHOLD`.
+- **Transparent Confidence Rubric:** Documented deterministic confidence scoring formula (0.50 nominal, 0.85 base threshold, +0.02 repetition bonus, 0.95–0.99 for confirmed multi-probe/IDS signature corroboration).
+- **`data/sentinelai_suricata_eve_sample.json` & `sentinel_enriched_telemetry.csv`:** Packaged the 73-record audit dataset and verified the newly exported enriched CSV telemetry report.
+- **Automated Tests:** Added 6 new test functions in `tests/test_detector.py` covering normal traffic preservation, 14-record port scanning, 12-record repeated SSH failures, 10-record HTTP bursts, malformed/edge cases, and end-to-end 73-record pipeline verification. Total test suite expanded from 25 to 31 tests (100% passing).
+
+---
+
 ### Stage 9: Comprehensive Documentation & Hackathon Presentation Prep
 #### Added
 - **`README.md`**: Complete production-ready documentation with architectural diagrams (Mermaid), key features, Windows PowerShell setup, virtual environment activation, and test execution commands.
