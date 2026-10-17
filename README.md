@@ -91,6 +91,10 @@ python -m venv .venv
 
 ### Step 3: Install Required Dependencies
 ```powershell
+# For local full dashboard (Streamlit + Plotly + Tests):
+pip install -r requirements-dev.txt
+
+# Or for lean cloud production (Vercel serverless < 500 MB):
 pip install -r requirements.txt
 ```
 
@@ -144,7 +148,10 @@ CYBERplus/
 ├── database.py                # Embedded SQLite persistence (sentinel.db)
 ├── log_parser.py              # Suricata EVE JSON and generic log parser
 ├── live_monitor.py            # Thread-safe live telemetry simulator
-├── requirements.txt           # Modernized dependency specification
+├── requirements.txt           # Lean cloud production dependencies (<500MB for Vercel)
+├── requirements-dev.txt       # Local development & GUI dependencies (Streamlit, Plotly, Pytest)
+├── .vercelignore              # Deployment exclusion rules for Vercel
+├── vercel.json                # Vercel serverless routing & build configuration
 ├── .env.example               # Environment configuration template
 ├── pytest.ini                 # Pytest configuration
 ├── PROJECT_AUDIT.md           # Stage 1 forensic architectural audit

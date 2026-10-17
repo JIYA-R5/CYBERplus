@@ -53,22 +53,35 @@ class MLAnomalyDetector:
         self.random_state = random_state
         self.model = None
         self.is_fitted = False
+        self._fallback_means = None
+        self._fallback_stds = None
 
     def fit(self, features: np.ndarray) -> "MLAnomalyDetector":
         """
-        Train IsolationForest on normalized traffic features.
+        Train IsolationForest on normalized traffic features, or fallback to statistical
+        standard-deviation profiling if scikit-learn is not present in runtime environment.
         """
-        from sklearn.ensemble import IsolationForest
         if len(features) < 4:
             # Need minimum observations to train reliably
             return self
 
-        self.model = IsolationForest(
-            contamination=self.contamination,
-            random_state=self.random_state
-        )
-        self.model.fit(features)
-        self.is_fitted = True
+        try:
+            from sklearn.ensemble import IsolationForest
+            self.model = IsolationForest(
+                contamination=self.contamination,
+                random_state=self.random_state
+            )
+            self.model.fit(features)
+            self.is_fitted = True
+        except ImportError:
+            # Lightweight statistical fallback (pure numpy, zero external dependencies)
+            features_arr = np.asarray(features, dtype=float)
+            self._fallback_means = np.mean(features_arr, axis=0)
+            self._fallback_stds = np.std(features_arr, axis=0)
+            self._fallback_stds[self._fallback_stds == 0] = 1.0
+            self.model = "statistical_fallback"
+            self.is_fitted = True
+
         return self
 
     def predict_score(self, feature_vector: np.ndarray) -> Dict[str, Any]:
@@ -78,6 +91,21 @@ class MLAnomalyDetector:
         """
         if not self.is_fitted or self.model is None:
             return {"is_anomaly": False, "score": 0.0, "status": "Model uncalibrated"}
+
+        if self.model == "statistical_fallback":
+            vec = np.asarray(feature_vector, dtype=float).flatten()
+            z_scores = np.abs((vec - self._fallback_means) / self._fallback_stds)
+            max_z = float(np.max(z_scores))
+            # Standard anomaly threshold is z > 2.5
+            is_anomaly = bool(max_z > 2.5)
+            raw_score = round(max(-1.0, 0.5 - (max_z / 4.0)), 4)
+            normalized_confidence = round(max(0.0, min(1.0, max_z / 4.0)), 2)
+            return {
+                "is_anomaly": is_anomaly,
+                "raw_score": raw_score,
+                "confidence": normalized_confidence,
+                "status": "Evaluated"
+            }
 
         prediction = self.model.predict(feature_vector)[0]  # -1 for anomaly, 1 for inlier
         raw_score = float(self.model.decision_function(feature_vector)[0])

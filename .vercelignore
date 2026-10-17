@@ -1,0 +1,19 @@
+# Vercel Deployment Ignore
+# Exclude tests, local environments, git history, and caches from serverless bundle
+tests/
+.git/
+.gitignore
+.gitattributes
+.venv/
+venv/
+*.pyc
+__pycache__/
+.pytest_cache/
+.env*
+requirements-dev.txt
+pytest.ini
+PROJECT_AUDIT.md
+IMPLEMENTATION_PLAN.md
+CHANGELOG.md
+DEMO_GUIDE.md
+*.log

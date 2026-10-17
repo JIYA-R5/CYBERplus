@@ -1,26 +1,17 @@
-# SentinelAI - Python Package Dependencies
+# SentinelAI - Production Cloud Dependencies (Optimized for Vercel Serverless Function < 500 MB)
 
-# Core Web Dashboard & Visualization
-streamlit>=1.30.0
-plotly>=5.18.0
+# Fast REST API & Serverless ASGI Engine
 fastapi>=0.100.0
 uvicorn>=0.20.0
 python-multipart>=0.0.6
 
-# Telemetry Data Manipulation & Numerics
+# Telemetry Processing & Data Structures
 pandas>=2.0.0
 numpy>=1.24.0
 
-# AI Threat Explainer & LLM Integration
+# AI Threat Explainer & LLM Integration (Official lightweight SDK)
 google-genai>=0.8.0
-google-generativeai>=0.8.0
 
 # Environment Configuration & Schema Validation
 python-dotenv>=1.0.0
 pydantic>=2.5.0
-
-# Statistical Modeling & Machine Learning
-scikit-learn>=1.3.0
-
-# Automated Testing & Verification
-pytest>=7.4.0
