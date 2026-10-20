@@ -1,0 +1,30 @@
+{
+  "model_version": "v1.0.1",
+  "algorithm": "IsolationForest",
+  "contamination_parameter": 0.12,
+  "trained_at": "2026-10-20T19:56:27.117328",
+  "trained_by": "SOC Admin",
+  "train_sample_count": 225,
+  "test_sample_count": 75,
+  "total_samples": 300,
+  "test_inlier_count": 67,
+  "test_outlier_count": 8,
+  "test_empirical_outlier_ratio": 0.1067,
+  "test_score_mean": 0.088,
+  "test_score_std": 0.0529,
+  "features_used": [
+    "packets",
+    "port",
+    "flow_frequency",
+    "unique_ports_contacted",
+    "mean_packets_per_flow",
+    "is_privileged_port",
+    "is_admin_port",
+    "proto_tcp",
+    "proto_udp",
+    "proto_icmp",
+    "outcome_allowed",
+    "outcome_blocked"
+  ],
+  "status": "VALIDATED_AND_TRAINED"
+}

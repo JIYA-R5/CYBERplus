@@ -62,6 +62,37 @@ class CopilotQueryRequest(BaseModel):
     risk: str = "High"
     query: Optional[str] = None
 
+class VerdictRequest(BaseModel):
+    verdict: str
+    analyst_user: str = "SOC Cloud Analyst"
+    reason: str = "Confirmed via threat triage"
+
+class MLPredictRequest(BaseModel):
+    packets: int
+    port: int
+    source_ip: str
+    destination_ip: Optional[str] = "Target Perimeter"
+    activity: Optional[str] = "Normal Traffic"
+    risk: Optional[str] = "Low"
+
+class MLRetrainRequest(BaseModel):
+    version_tag: Optional[str] = None
+    sample_count: int = 300
+    contamination: Optional[float] = 0.15
+    trained_by: str = "SOC Admin"
+
+class MLRevertRequest(BaseModel):
+    version: str
+
+
+class RollbackBlockRequest(BaseModel):
+    block_id: str
+    operator: str = "SOC Admin"
+
+class RetentionPurgeRequest(BaseModel):
+    retention_days: int = 30
+    operator: str = "SOC Admin"
+
 
 # ------------------------------------------------------------------------------
 # API Endpoints
@@ -222,6 +253,122 @@ def get_audit_trail():
 def reset_demo_database():
     db.reset_demo_data()
     return {"status": "success", "message": "Demo incidents restored"}
+
+
+@app.post("/api/incidents/{incident_id}/verdict")
+def submit_verdict(incident_id: str, req: VerdictRequest):
+    inc = db.get_incident_by_id(incident_id)
+    if not inc:
+        raise HTTPException(status_code=404, detail=f"Incident '{incident_id}' not found")
+    fb_id = db.record_analyst_feedback(
+        incident_id=incident_id,
+        verdict=req.verdict,
+        analyst_user=req.analyst_user,
+        reason=req.reason
+    )
+    return {
+        "status": "success",
+        "feedback_id": fb_id,
+        "incident_id": incident_id,
+        "verdict": req.verdict
+    }
+
+
+@app.get("/api/incidents/{incident_id}/explain")
+def explain_specific_incident(incident_id: str):
+    inc = db.get_incident_by_id(incident_id)
+    if not inc:
+        raise HTTPException(status_code=404, detail=f"Incident '{incident_id}' not found")
+    return explainer.explain_incident(inc)
+
+
+@app.get("/api/ml/status")
+def get_ml_status():
+    from ml_engine import get_ml_engine
+    ml_eng = get_ml_engine()
+    active_in_db = db.get_active_model()
+    registry = db.get_model_registry()
+    return {
+        "active_model_version": ml_eng.model_version,
+        "is_fitted": ml_eng.is_fitted,
+        "metrics": ml_eng.metrics,
+        "database_active_model": active_in_db,
+        "registered_models": registry
+    }
+
+
+@app.post("/api/ml/predict")
+def predict_ml(req: MLPredictRequest):
+    from ml_engine import get_ml_engine
+    ml_eng = get_ml_engine()
+    return ml_eng.predict_score({
+        "packets": req.packets,
+        "port": req.port,
+        "source_ip": req.source_ip,
+        "destination_ip": req.destination_ip,
+        "activity": req.activity,
+        "risk": req.risk
+    })
+
+
+@app.post("/api/ml/retrain")
+def retrain_ml(req: MLRetrainRequest):
+    from ml_engine import get_ml_engine, MLAnomalyEngine
+    ml_eng = get_ml_engine()
+    fixtures = MLAnomalyEngine.generate_synthetic_lab_fixtures(n_samples=req.sample_count)
+    metrics = ml_eng.train_controlled_pipeline(
+        training_data=fixtures,
+        version_tag=req.version_tag,
+        trained_by=req.trained_by,
+        contamination=req.contamination
+    )
+    if metrics.get("status") == "VALIDATED_AND_TRAINED":
+        db.register_model(
+            version=metrics["model_version"],
+            algorithm=metrics["algorithm"],
+            sample_count=metrics["total_samples"],
+            metrics=metrics,
+            artifact_path=metrics["artifact_path"],
+            trained_by=req.trained_by,
+            set_active=True
+        )
+    return {
+        "status": "success",
+        "validation_status": metrics.get("status"),
+        "new_model_version": metrics.get("model_version"),
+        "metrics": metrics,
+        "raw": metrics
+    }
+
+
+@app.post("/api/ml/revert")
+def revert_ml(req: MLRevertRequest):
+    from ml_engine import get_ml_engine
+    ml_eng = get_ml_engine()
+    success = ml_eng.revert_model(req.version)
+    if success:
+        db.set_active_model_version(req.version)
+        return {"status": "success", "active_model_version": req.version}
+    raise HTTPException(status_code=400, detail=f"Could not revert to version '{req.version}'. Artifact not found.")
+
+
+@app.get("/api/blocks")
+def list_blocks():
+    expired = db.check_and_expire_blocks()
+    blocks = db.get_active_blocks()
+    return {"active_blocks": blocks, "recently_expired": expired}
+
+
+@app.post("/api/blocks/rollback")
+def rollback_block_endpoint(req: RollbackBlockRequest):
+    res = db.rollback_block(block_id=req.block_id, operator=req.operator)
+    return res
+
+
+@app.post("/api/retention/purge")
+def purge_retention(req: RetentionPurgeRequest):
+    res = db.apply_data_retention(retention_days=req.retention_days, operator=req.operator)
+    return {"status": "success", "result": res}
 
 
 # ------------------------------------------------------------------------------
@@ -491,7 +638,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   <nav class="tabs-bar">
     <button class="tab-btn active" onclick="switchTab('overview')">📊 SOC Overview</button>
     <button class="tab-btn" onclick="switchTab('incidents')">🚨 Incident Queue</button>
+    <button class="tab-btn" onclick="switchTab('ml')">🧠 ML Threat Intelligence</button>
     <button class="tab-btn" onclick="switchTab('copilot')">🤖 AI Threat Copilot</button>
+    <button class="tab-btn" onclick="switchTab('blocks')">🛡️ Active Containment & Expiry</button>
     <button class="tab-btn" onclick="switchTab('ingestion')">📁 Telemetry Ingestion</button>
     <button class="tab-btn" onclick="switchTab('live')">📡 Live Monitoring</button>
     <button class="tab-btn" onclick="switchTab('audit')">📜 Response Audit Trail</button>
@@ -611,6 +760,74 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       </div>
     </div>
 
+    <!-- TAB: ML THREAT INTELLIGENCE -->
+    <div id="tab-ml" class="tab-content">
+      <div class="two-col">
+        <div class="glass-card">
+          <div class="card-head">
+            <h2>🧠 Active Model Performance & Metrics</h2>
+            <button class="btn btn-secondary" onclick="loadMLStatus()">Refresh ML Status</button>
+          </div>
+          <div id="mlMetricsContainer">Loading active model performance...</div>
+        </div>
+        <div class="glass-card">
+          <div class="card-head">
+            <h2>🧪 Controlled Retraining Console</h2>
+          </div>
+          <p style="color: var(--text-muted); margin-bottom: 14px; font-size: 0.85rem;">
+            Executes controlled retraining with validation gates, holdout evaluation, and version registry persistence.
+          </p>
+          <div style="display:flex; flex-direction:column; gap:12px;">
+            <div>
+              <label style="font-size:0.8rem; color:#94a3b8;">Synthetic Fixture Sample Count:</label>
+              <input type="number" id="retrainSamples" value="300" min="100" max="1000" style="background:#1e293b; color:white; border:1px solid #334155; padding:8px 12px; border-radius:6px; width:100%;">
+            </div>
+            <div>
+              <label style="font-size:0.8rem; color:#94a3b8;">Contamination Parameter:</label>
+              <input type="number" id="retrainContam" value="0.15" step="0.01" min="0.05" max="0.30" style="background:#1e293b; color:white; border:1px solid #334155; padding:8px 12px; border-radius:6px; width:100%;">
+            </div>
+            <button class="btn" onclick="retrainModel()">🚀 Run Controlled Retraining</button>
+            <div id="retrainResult" style="font-size:0.85rem; margin-top:8px;"></div>
+          </div>
+        </div>
+      </div>
+      <div class="glass-card">
+        <div class="card-head">
+          <h2>⚡ Real-Time ML Anomaly Scorer</h2>
+        </div>
+        <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:12px; margin-bottom:12px;">
+          <div><label style="font-size:0.75rem; color:#94a3b8;">Packets</label><input type="number" id="evalPackets" value="120" style="background:#1e293b; color:white; border:1px solid #334155; padding:8px; border-radius:6px; width:100%;"></div>
+          <div><label style="font-size:0.75rem; color:#94a3b8;">Port</label><input type="number" id="evalPort" value="443" style="background:#1e293b; color:white; border:1px solid #334155; padding:8px; border-radius:6px; width:100%;"></div>
+          <div><label style="font-size:0.75rem; color:#94a3b8;">Source IP</label><input type="text" id="evalSrc" value="192.168.1.55" style="background:#1e293b; color:white; border:1px solid #334155; padding:8px; border-radius:6px; width:100%;"></div>
+        </div>
+        <button class="btn btn-secondary" onclick="evaluateSingleFlow()">Score Telemetry Flow</button>
+        <div id="flowScoreResult" style="margin-top:12px; font-size:0.9rem;"></div>
+      </div>
+    </div>
+
+    <!-- TAB: ACTIVE BLOCKS & EXPIRY -->
+    <div id="tab-blocks" class="tab-content">
+      <div class="glass-card">
+        <div class="card-head">
+          <h2>🛡️ Active Containment Rules & Expiry Watchdog</h2>
+          <button class="btn btn-secondary" onclick="loadActiveBlocks()">Check Expiry & Refresh</button>
+        </div>
+        <p style="color: var(--text-muted); margin-bottom: 16px; font-size: 0.85rem;">
+          Temporary containment policies expire automatically. Administrator approvals and rollbacks are logged to the audit ledger.
+        </p>
+        <div id="activeBlocksContainer">Loading active blocks...</div>
+      </div>
+      <div class="glass-card">
+        <div class="card-head">
+          <h2>🔒 Protected Core Infrastructure Allowlist</h2>
+        </div>
+        <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 8px;">
+          The following indicators are permanently protected from automated or accidental firewall blocking:
+        </p>
+        <code style="background:#0f172a; padding:8px 12px; border-radius:6px; display:block; color:#38bdf8;">127.0.0.1, ::1, 0.0.0.0, 192.168.1.1, 10.0.0.1, 172.16.0.1, 1.1.1.1, 8.8.8.8, 8.8.4.4, 9.9.9.9</code>
+      </div>
+    </div>
+
     <!-- TAB 6: AUDIT TRAIL -->
     <div id="tab-audit" class="tab-content">
       <div class="glass-card">
@@ -632,12 +849,16 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     function switchTab(tabId) {
       document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
       document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-      event.target.classList.add('active');
-      document.getElementById('tab-' + tabId).classList.add('active');
+      const activeBtn = Array.from(document.querySelectorAll('.tab-btn')).find(b => b.getAttribute('onclick')?.includes(tabId));
+      if (activeBtn) activeBtn.classList.add('active');
+      const targetTab = document.getElementById('tab-' + tabId);
+      if (targetTab) targetTab.classList.add('active');
 
       if (tabId === 'incidents') loadIncidents();
       if (tabId === 'audit') loadAuditTrail();
       if (tabId === 'overview') loadStatus();
+      if (tabId === 'ml') loadMLStatus();
+      if (tabId === 'blocks') loadActiveBlocks();
     }
 
     async function loadStatus() {
@@ -695,20 +916,35 @@ DASHBOARD_HTML = """<!DOCTYPE html>
           return;
         }
 
-        let html = '<table><thead><tr><th>ID</th><th>Severity</th><th>Category</th><th>Source Attacker</th><th>Target</th><th>Confidence</th><th>MITRE</th><th>Action</th></tr></thead><tbody>';
+        let html = '<table><thead><tr><th>ID</th><th>Severity</th><th>Category</th><th>Source Attacker</th><th>Target</th><th>ML Anomaly</th><th>Recur</th><th>Analyst Verdict</th><th>Action</th></tr></thead><tbody>';
         list.forEach(i => {
           const sevClass = 'badge-' + (i.severity || 'low').toLowerCase();
+          const mlScoreDisplay = i.ml_is_anomaly
+            ? `<span style="color:#f87171; font-weight:700;">⚠️ Yes (${i.ml_anomaly_score !== null && i.ml_anomaly_score !== undefined ? Number(i.ml_anomaly_score).toFixed(2) : 'N/A'})</span>`
+            : `<span style="color:#10b981;">Normal</span>`;
+          const recurCount = i.recurrence_count ? `${i.recurrence_count}x` : '1x';
           html += `<tr>
             <td><strong>${i.incident_id}</strong></td>
             <td><span class="badge ${sevClass}">${i.severity}</span></td>
             <td><strong>${i.category}</strong></td>
             <td><code>${i.source_ip}</code></td>
             <td><code>${i.destination_ip || 'Internal'}</code></td>
-            <td>${Math.round(i.confidence * 100)}%</td>
-            <td><code>${i.mitre_id || 'T1046'}</code></td>
+            <td>${mlScoreDisplay}</td>
+            <td><code>${recurCount}</code></td>
             <td>
-              <button class="btn btn-danger" style="padding:6px 12px; font-size:0.75rem;" onclick="simulateContain('${i.incident_id}', '${i.source_ip}')">🛡️ Contain (Dry-Run)</button>
-              <button class="btn btn-secondary" style="padding:6px 12px; font-size:0.75rem; margin-left:6px;" onclick="viewCopilot('${i.category}', '${i.source_ip}')">🤖 AI Triage</button>
+              <div style="display:flex; flex-direction:column; gap:4px;">
+                <select id="verdict-${i.incident_id}" style="background:#1e293b; color:white; border:1px solid #334155; padding:4px 6px; border-radius:4px; font-size:0.75rem;">
+                  <option value="Unresolved" ${i.analyst_verdict === 'Unresolved' ? 'selected' : ''}>Unresolved</option>
+                  <option value="True Positive" ${i.analyst_verdict === 'True Positive' ? 'selected' : ''}>True Positive</option>
+                  <option value="False Positive" ${i.analyst_verdict === 'False Positive' ? 'selected' : ''}>False Positive</option>
+                  <option value="Benign" ${i.analyst_verdict === 'Benign' ? 'selected' : ''}>Benign</option>
+                </select>
+                <button class="btn btn-secondary" style="padding:2px 6px; font-size:0.7rem;" onclick="submitVerdict('${i.incident_id}')">Save Verdict</button>
+              </div>
+            </td>
+            <td>
+              <button class="btn btn-danger" style="padding:6px 10px; font-size:0.75rem;" onclick="simulateContain('${i.incident_id}', '${i.source_ip}')">🛡️ Contain (Dry-Run)</button>
+              <button class="btn btn-secondary" style="padding:6px 10px; font-size:0.75rem; margin-top:4px;" onclick="viewGroundedCopilot('${i.incident_id}')">🤖 AI Triage</button>
             </td>
           </tr>`;
         });
@@ -716,6 +952,28 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         container.innerHTML = html;
       } catch (e) {
         container.innerHTML = `<p style="color:red;">Failed to load incidents: ${e}</p>`;
+      }
+    }
+
+    async function submitVerdict(id) {
+      const select = document.getElementById(`verdict-${id}`);
+      if (!select) return;
+      const verdict = select.value;
+      try {
+        const res = await fetch(`/api/incidents/${id}/verdict`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            verdict: verdict,
+            analyst_user: 'SOC Analyst (Web UI)',
+            reason: `Analyst classified incident as ${verdict}`
+          })
+        });
+        const data = await res.json();
+        alert(`Analyst verdict saved for ${id}: ${data.verdict}`);
+        loadIncidents();
+      } catch (e) {
+        alert(`Failed to save verdict: ${e}`);
       }
     }
 
@@ -739,33 +997,193 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       }
     }
 
-    async function viewCopilot(category, ip) {
+    async function viewGroundedCopilot(id) {
       switchTab('copilot');
       const box = document.getElementById('copilotDetails');
-      box.innerHTML = 'Analyzing with AI Copilot...';
+      box.innerHTML = `<p>Grounding Google Gemini threat investigation in stored evidence for incident <strong>${id}</strong>...</p>`;
       try {
-        const res = await fetch('/api/copilot', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ incident_id: 'DEMO', category: category, source_ip: ip })
-        });
-        const data = await res.json();
-        const exp = data.explanation;
+        const res = await fetch(`/api/incidents/${id}/explain`);
+        const exp = await res.json();
         box.innerHTML = `
           <div style="background:#0f172a; padding:18px; border-radius:8px; border:1px solid #1e293b; margin-bottom:16px;">
-            <h3 style="color:#60a5fa; margin-bottom:8px;">${exp.activity} (Attacker: ${exp.source_ip})</h3>
+            <div style="background:rgba(239, 68, 68, 0.1); border-left:4px solid #ef4444; padding:8px 12px; margin-bottom:12px; font-size:0.8rem; color:#fca5a5;">
+              <strong>🛡️ AI Safety Boundary:</strong> ${exp.ai_safety_notice || 'AI Guidance Notice: This assessment is advisory only. Autonomous firewall modification is strictly prohibited.'}
+            </div>
+            <h3 style="color:#60a5fa; margin-bottom:8px;">${exp.activity || 'Incident Analysis'} (Target Host: ${exp.source_ip || id})</h3>
             <p style="margin-bottom:12px;"><strong>Executive Summary:</strong> ${exp.summary}</p>
             <p style="margin-bottom:12px;"><strong>Technical Mechanism:</strong> ${exp.mechanism}</p>
             <p style="margin-bottom:12px;"><strong>Potential Impact:</strong> ${exp.potential_impact}</p>
             <p style="margin-bottom:12px;"><strong>MITRE ATT&CK:</strong> <code>${exp.mitre_technique}</code></p>
-            <h4 style="color:#38bdf8; margin:16px 0 8px 0;">Forensic Investigation Checklist</h4>
-            <ul style="padding-left:20px; line-height:1.7;">
-              ${exp.investigation_steps.map(s => `<li>${s}</li>`).join('')}
+            
+            <h4 style="color:#38bdf8; margin:16px 0 6px 0;">🔍 Observed Telemetry Facts</h4>
+            <ul style="padding-left:20px; line-height:1.6; font-size:0.85rem; color:#cbd5e1;">
+              ${(exp.observed_facts || []).map(f => `<li>${f}</li>`).join('')}
+            </ul>
+
+            <h4 style="color:#a855f7; margin:16px 0 6px 0;">🧠 ML Model Predictions</h4>
+            <ul style="padding-left:20px; line-height:1.6; font-size:0.85rem; color:#cbd5e1;">
+              ${(exp.model_predictions || []).map(p => `<li>${p}</li>`).join('')}
+            </ul>
+
+            <h4 style="color:#f59e0b; margin:16px 0 6px 0;">💡 Threat Hypotheses & Investigation Steps</h4>
+            <ul style="padding-left:20px; line-height:1.6; font-size:0.85rem; color:#cbd5e1;">
+              ${(exp.investigation_steps || []).map(s => `<li>${s}</li>`).join('')}
             </ul>
           </div>
         `;
       } catch (e) {
-        box.innerHTML = `<p style="color:red;">AI Copilot error: ${e}</p>`;
+        box.innerHTML = `<p style="color:red;">Error loading grounded investigation: ${e}</p>`;
+      }
+    }
+
+    async function loadMLStatus() {
+      const container = document.getElementById('mlMetricsContainer');
+      try {
+        const res = await fetch('/api/ml/status');
+        const data = await res.json();
+        const metrics = data.metrics || {};
+        container.innerHTML = `
+          <div style="display:flex; flex-direction:column; gap:10px; font-size:0.9rem;">
+            <div style="background:#090d16; padding:12px; border-radius:6px; border:1px solid #1e293b;">
+              <div><strong>Active Model Version:</strong> <span style="color:#38bdf8;">${data.active_model_version || 'None'}</span></div>
+              <div><strong>Model Status:</strong> ${data.is_fitted ? '🟢 Active & Fitted' : '🔴 Unfitted'}</div>
+              <div><strong>Model Algorithm:</strong> Isolation Forest (scikit-learn)</div>
+            </div>
+            <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:8px;">
+              <div style="background:#090d16; padding:10px; border-radius:6px; text-align:center;">
+                <div style="color:#94a3b8; font-size:0.75rem;">TEST ACCURACY</div>
+                <div style="font-size:1.2rem; font-weight:700; color:#10b981;">${metrics.accuracy ? Math.round(metrics.accuracy * 100) + '%' : 'N/A'}</div>
+              </div>
+              <div style="background:#090d16; padding:10px; border-radius:6px; text-align:center;">
+                <div style="color:#94a3b8; font-size:0.75rem;">ROC-AUC</div>
+                <div style="font-size:1.2rem; font-weight:700; color:#60a5fa;">${metrics.roc_auc ? metrics.roc_auc.toFixed(3) : 'N/A'}</div>
+              </div>
+              <div style="background:#090d16; padding:10px; border-radius:6px; text-align:center;">
+                <div style="color:#94a3b8; font-size:0.75rem;">PR-AUC</div>
+                <div style="font-size:1.2rem; font-weight:700; color:#a855f7;">${metrics.pr_auc ? metrics.pr_auc.toFixed(3) : 'N/A'}</div>
+              </div>
+            </div>
+            <div style="font-size:0.8rem; color:#94a3b8; line-height:1.4;">
+              <strong>Sample Volume:</strong> ${metrics.train_samples || 0} training / ${metrics.test_samples || 0} test held-out flows.
+            </div>
+            <div style="background:rgba(234, 179, 8, 0.1); border-left:3px solid #eab308; padding:8px 10px; font-size:0.75rem; color:#fde047;">
+              <strong>Standard ML Notice:</strong> ${data.disclaimer || 'Anomaly scores measure statistical deviation and are NOT proof of an attack.'}
+            </div>
+          </div>
+        `;
+      } catch (e) {
+        container.innerHTML = `<p style="color:red;">Failed to load ML status: ${e}</p>`;
+      }
+    }
+
+    async function retrainModel() {
+      const resultBox = document.getElementById('retrainResult');
+      const samples = parseInt(document.getElementById('retrainSamples').value) || 300;
+      const contam = parseFloat(document.getElementById('retrainContam').value) || 0.15;
+      resultBox.innerHTML = 'Executing controlled retraining pipeline...';
+      try {
+        const res = await fetch('/api/ml/retrain', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ synthetic_samples: samples, contamination: contam })
+        });
+        const data = await res.json();
+        if (data.status === 'success') {
+          resultBox.innerHTML = `<span style="color:#10b981;">✅ Trained <strong>${data.new_model_version}</strong>. Accuracy: ${Math.round(data.metrics.accuracy * 100)}%, ROC-AUC: ${data.metrics.roc_auc.toFixed(3)}</span>`;
+          loadMLStatus();
+        } else {
+          resultBox.innerHTML = `<span style="color:#ef4444;">❌ Retraining failed: ${data.detail || JSON.stringify(data)}</span>`;
+        }
+      } catch (e) {
+        resultBox.innerHTML = `<span style="color:#ef4444;">Retrain error: ${e}</span>`;
+      }
+    }
+
+    async function evaluateSingleFlow() {
+      const box = document.getElementById('flowScoreResult');
+      const packets = parseInt(document.getElementById('evalPackets').value) || 1;
+      const port = parseInt(document.getElementById('evalPort').value) || 80;
+      const src = document.getElementById('evalSrc').value || '192.168.1.100';
+      box.innerHTML = 'Evaluating flow against Isolation Forest...';
+      try {
+        const res = await fetch('/api/ml/predict', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ packets: packets, port: port, source_ip: src })
+        });
+        const data = await res.json();
+        const isAnomaly = data.is_anomaly;
+        const color = isAnomaly ? '#ef4444' : '#10b981';
+        box.innerHTML = `
+          <div style="background:#090d16; padding:12px; border-radius:6px; border:1px solid ${color};">
+            <div style="font-weight:700; color:${color}; font-size:1rem; margin-bottom:4px;">
+              ${isAnomaly ? '⚠️ ML ANOMALY DETECTED' : '✅ STATISTICALLY NORMAL FLOW'}
+            </div>
+            <div style="font-size:0.85rem; color:#cbd5e1;">
+              <strong>Raw Anomaly Score:</strong> ${data.raw_score.toFixed(4)} | 
+              <strong>Confidence:</strong> ${(data.confidence * 100).toFixed(1)}% | 
+              <strong>Evaluated By:</strong> <code>${data.model_version}</code>
+            </div>
+            <div style="font-size:0.75rem; color:#94a3b8; margin-top:6px;">
+              <em>${data.disclaimer}</em>
+            </div>
+          </div>
+        `;
+      } catch (e) {
+        box.innerHTML = `<span style="color:#ef4444;">Evaluation error: ${e}</span>`;
+      }
+    }
+
+    async function loadActiveBlocks() {
+      const container = document.getElementById('activeBlocksContainer');
+      try {
+        const res = await fetch('/api/blocks');
+        const data = await res.json();
+        const blocks = data.active_blocks || [];
+        if (blocks.length === 0) {
+          container.innerHTML = '<p style="color:#94a3b8;">No active containment blocks currently enforced. All network perimeters clear.</p>';
+          return;
+        }
+        let html = '<table><thead><tr><th>Rule ID</th><th>Target IP</th><th>Mode</th><th>Duration</th><th>Applied At</th><th>Expires At</th><th>Admin Approver</th><th>Action</th></tr></thead><tbody>';
+        blocks.forEach(b => {
+          html += `<tr>
+            <td><code>${b.block_id}</code></td>
+            <td><strong style="color:#f87171;">${b.ip_address}</strong></td>
+            <td><code>${b.execution_mode}</code></td>
+            <td>${b.duration_minutes ? b.duration_minutes + ' min' : 'Permanent'}</td>
+            <td><small>${b.applied_at || ''}</small></td>
+            <td><small style="color:#fdba74;">${b.expires_at || 'Never'}</small></td>
+            <td>${b.admin_approver || 'Pending'}</td>
+            <td>
+              <button class="btn btn-danger" style="padding:4px 8px; font-size:0.75rem;" onclick="rollbackBlock('${b.block_id}')">Rollback</button>
+            </td>
+          </tr>`;
+        });
+        html += '</tbody></table>';
+        container.innerHTML = html;
+      } catch (e) {
+        container.innerHTML = `<p style="color:red;">Failed to load active containment rules: ${e}</p>`;
+      }
+    }
+
+    async function rollbackBlock(blockId) {
+      if (!confirm(`Are you sure you want to rollback containment rule ${blockId}?`)) return;
+      try {
+        const res = await fetch('/api/blocks/rollback', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            block_id: blockId,
+            admin_user: 'SOC Admin (Dashboard)',
+            reason: 'Authorized manual analyst rollback'
+          })
+        });
+        const data = await res.json();
+        alert(`Rollback status: ${data.status} for ${blockId}`);
+        loadActiveBlocks();
+        loadAuditTrail();
+      } catch (e) {
+        alert(`Rollback failed: ${e}`);
       }
     }
 

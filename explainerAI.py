@@ -1,7 +1,8 @@
 """
 SentinelAI - ExplainerAI Module
 Provides context-aware cybersecurity threat explanations, MITRE ATT&CK mapping,
-and forensic investigation checklists using Google Gemini with deterministic local fallbacks.
+forensic investigation checklists, and incident summaries using Google Gemini
+with deterministic local fallbacks and strict AI safety guardrails.
 """
 
 from typing import Dict, Any, List, Optional, Union
@@ -11,7 +12,9 @@ import logging
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
-# Load local environment variables from .env if available
+# Load local environment variables from .env.local or .env if available
+load_dotenv(".env.local")
+load_dotenv(".env")
 load_dotenv()
 
 logger = logging.getLogger("SentinelAI.Explainer")
@@ -20,6 +23,7 @@ logger = logging.getLogger("SentinelAI.Explainer")
 class ThreatExplanation(BaseModel):
     """
     Validated Pydantic data contract for AI and local rule-based threat explanations.
+    Strictly distinguishes observed facts, model predictions, and attack hypotheses.
     """
     activity: str = Field(description="Identified threat or activity name")
     source_ip: str = Field(description="Originating source IP address")
@@ -35,10 +39,20 @@ class ThreatExplanation(BaseModel):
     containment_recommendations: List[str] = Field(default_factory=list, description="Defensive containment suggestions")
     custom_details: str = Field(default="", description="Contextual evidence or runtime notes")
     investigation_prompt: str = Field(default="", description="Guided prompt for deeper SOC triage")
+
+    # Clear segregation of evidence, predictions, and hypotheses
+    observed_facts: Dict[str, Any] = Field(default_factory=dict, description="Verified observed network indicators and raw telemetry")
+    model_predictions: Dict[str, Any] = Field(default_factory=dict, description="Machine learning anomaly score and confidence ratings")
+    threat_hypotheses: str = Field(default="", description="Plausible attack scenarios vs benign administrative explanations")
+
     provider: str = Field(default="local_rule_fallback", description="Explanation provider: 'google_gemini' or 'local_rule_fallback'")
     ai_disclaimer: str = Field(
         default="Advisory notice: AI-generated explanations are guidance recommendations and must be verified by a human security analyst.",
         description="Mandatory compliance disclaimer"
+    )
+    ai_safety_notice: str = Field(
+        default="Safety Guardrail: AI outputs are advisory hypotheses for analyst consideration. AI cannot classify an IP as malicious or trigger automated firewall containment.",
+        description="Response safety constraint"
     )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -57,7 +71,7 @@ class ThreatExplainer:
         self.is_gemini_active = False
 
         # Attempt to initialize official google.genai client if API key is present
-        if self.api_key and self.api_key != "your_gemini_api_key_here":
+        if self.api_key and self.api_key not in ["your_gemini_api_key_here", "INVALID_TEST_KEY_12345"]:
             try:
                 from google import genai
                 self.gemini_client = genai.Client(api_key=self.api_key)
@@ -138,55 +152,52 @@ class ThreatExplainer:
                 "recommended_focus": "Activate upstream DDoS mitigation scrubbing and apply rate-limiting ACLs.",
                 "investigation_steps": [
                     "Inspect packet protocol distribution (TCP SYN, UDP amplification, ICMP).",
-                    "Correlate ingress interface saturation metrics with edge routing telemetry.",
-                    "Verify whether source IP addresses are spoofed or originate from an identifiable botnet cluster.",
-                    "Check server resource metrics (CPU, RAM, connection pool limits)."
+                    "Determine if traffic source is spoofed or distributed across multiple subnets.",
+                    "Engage cloud scrubbers or upstream ISP upstream mitigation filters."
                 ],
                 "containment_recommendations": [
-                    "Engage cloud scrubbing center / upstream provider DDoS protection.",
-                    "Deploy border rate-limiting and SYN-proxy defense.",
-                    "Drop malformed or unrequested UDP/ICMP packets at perimeter router."
+                    "Activate upstream DDoS scrubbing policies.",
+                    "Deploy rate-limiting and boundary ACL drops.",
+                    "Route non-critical services to failover infrastructure."
                 ]
             },
             "Data Exfiltration": {
                 "summary": (
-                    "Atypical high-volume outbound data flow directed towards an external destination. "
-                    "Indicates unauthorized bulk extraction of sensitive files or database archives."
+                    "Abnormal outbound data volume transfer indicating possible intellectual property or sensitive database theft."
                 ),
                 "mechanism": (
-                    "Transmission of compressed archives or sensitive telemetry via encrypted, non-standard, or covert channels."
+                    "Staging and transferring compressed archives or database dumps over encrypted egress channels (HTTPS, DNS tunneling, SFTP)."
                 ),
                 "potential_impact": (
-                    "Loss of intellectual property, breach of customer records, regulatory non-compliance."
+                    "Confidential data loss, regulatory non-compliance fines (GDPR/HIPAA), loss of competitive advantage."
                 ),
                 "mitre_technique": "T1048 - Exfiltration Over Alternative Protocol",
-                "recommended_focus": "Identify destination endpoint ownership, inspect payload hashes, and isolate host.",
+                "recommended_focus": "Isolate the compromised internal host and capture memory dumps for digital forensics.",
                 "investigation_steps": [
-                    "Identify exact destination IP, domain name, and geographical jurisdiction.",
-                    "Correlate timestamp with local endpoint file-access audit logs.",
-                    "Determine outbound volume transferred (megabytes/gigabytes).",
-                    "Capture memory dump of the source workstation for digital forensics."
+                    "Check endpoint proxy logs for large POST/PUT requests to unfamiliar external domains.",
+                    "Inspect process execution tree on source machine around the time of the transfer.",
+                    "Verify file integrity and database access logs for unusual export queries."
                 ],
                 "containment_recommendations": [
-                    "Sever network connectivity for the affected endpoint immediately.",
-                    "Revoke user credentials, active VPN sessions, and cloud access keys.",
-                    "Preserve disk and volatile RAM images for forensic analysis."
+                    "Sever network egress connectivity for the host immediately.",
+                    "Revoke host credentials and API tokens.",
+                    "Preserve disk and volatile memory artifacts for legal chain-of-custody."
                 ]
             },
             "Suspicious Reconnaissance": {
                 "summary": (
-                    "Unusual host sweep or discovery attempting to identify live devices and subnet topology."
+                    "Low-frequency host discovery, ping sweeps, or irregular SNMP/ICMP queries across internal network segments."
                 ),
                 "mechanism": (
-                    "Transmitting ICMP echo requests, ARP sweeps, or SNMP probes across internal subnets."
+                    "Probing of subnet address spaces to locate active endpoints, routers, and peripheral appliances."
                 ),
                 "potential_impact": (
-                    "Internal network architecture mapping and identification of high-value internal assets."
+                    "Internal network architecture mapping facilitating subsequent lateral movement."
                 ),
                 "mitre_technique": "T1595 - Active Scanning",
-                "recommended_focus": "Review subnet isolation policies and restrict ICMP/internal sweeping.",
+                "recommended_focus": "Verify if the source IP belongs to an authorized internal IT asset scanner or unauthorized host.",
                 "investigation_steps": [
-                    "Verify if source host is part of IT administrative inventory.",
+                    "Check vulnerability scanner schedule with IT infrastructure team.",
                     "Determine scope of IP range scanned within the local network.",
                     "Check for subsequent connection attempts on discovered live hosts."
                 ],
@@ -310,11 +321,131 @@ class ThreatExplainer:
                 f"Verify traffic originating from host {source_ip} transferring {packets} packets. "
                 f"Evaluate if this represents legitimate administrative activity or malicious {activity}."
             ),
+            observed_facts={
+                "source_ip": source_ip,
+                "packet_volume": packets,
+                "activity": activity,
+                "risk": risk
+            },
+            model_predictions={
+                "detection_engine": "Deterministic Heuristics / Knowledge Base",
+                "risk_rating": risk
+            },
+            threat_hypotheses=(
+                f"Plausible Hypothesis: Potential {activity} targeting internal network assets. "
+                "Alternative Hypothesis: Legitimate administrative maintenance or heavy backup job."
+            ),
             provider="local_rule_fallback",
             ai_disclaimer="Deterministic rule-based advisory (Local Fallback Mode). Recommended for operational verification."
         )
 
         return explanation.to_dict()
+
+    def explain_incident(self, incident: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Explain a stored incident entity using actual stored evidence and historical telemetry.
+        Strictly segregates observed facts, ML model predictions, and attack hypotheses.
+        """
+        activity = incident.get("category", "Unknown Threat")
+        source_ip = incident.get("source_ip", "0.0.0.0")
+        packets = int(incident.get("total_packets", 0))
+        risk = incident.get("severity", "High")
+        details = incident.get("evidence", "")
+
+        # Incorporate rich stored incident context
+        observed_facts = {
+            "incident_id": incident.get("incident_id"),
+            "source_ip": source_ip,
+            "destination_ip": incident.get("destination_ip"),
+            "destination_ports": incident.get("destination_ports", []),
+            "protocols": incident.get("protocols", ["TCP"]),
+            "event_count": incident.get("event_count", 1),
+            "total_packets": packets,
+            "first_seen": incident.get("first_seen") or incident.get("timestamp"),
+            "last_seen": incident.get("last_seen"),
+            "recurrence_count": incident.get("recurrence_count", 1),
+            "raw_evidence": incident.get("raw_evidence") or details
+        }
+
+        model_predictions = {
+            "model_version": incident.get("model_version", "v1.0.0"),
+            "ml_anomaly_score": incident.get("ml_anomaly_score", 0.0),
+            "ml_is_anomaly": bool(incident.get("ml_is_anomaly", False)),
+            "rule_id": incident.get("rule_id", "N/A"),
+            "mitre_id": incident.get("mitre_id", "N/A"),
+            "confidence": incident.get("confidence", 0.85)
+        }
+
+        if self.is_gemini_active and self.gemini_client is not None:
+            try:
+                prompt = (
+                    f"You are SentinelAI Threat Intelligence Copilot. Explain this stored incident evidence:\n"
+                    f"Observed Facts: {json.dumps(observed_facts)}\n"
+                    f"Model Predictions: {json.dumps(model_predictions)}\n"
+                    f"Requirements:\n"
+                    f"1. Clearly separate OBSERVED FACTS, MODEL PREDICTIONS, and ATTACK HYPOTHESES.\n"
+                    f"2. Never claim an IP address proves a person's identity.\n"
+                    f"3. Do not make autonomous blocking decisions.\n"
+                    f"Return ONLY valid JSON matching the schema:\n"
+                    f"{{\n"
+                    f'  "summary": "1-2 sentence executive briefing",\n'
+                    f'  "mechanism": "technical explanation of attack mechanism",\n'
+                    f'  "potential_impact": "business risk",\n'
+                    f'  "mitre_technique": "Txxxx - Name",\n'
+                    f'  "recommended_focus": "forensic focus",\n'
+                    f'  "threat_hypotheses": "attack hypothesis vs benign alternative",\n'
+                    f'  "investigation_steps": ["step 1", "step 2", "step 3"],\n'
+                    f'  "containment_recommendations": ["step 1", "step 2"]\n'
+                    f"}}"
+                )
+                response = self.gemini_client.models.generate_content(
+                    model="gemini-2.5-flash",
+                    contents=prompt,
+                )
+                if response and response.text:
+                    raw_text = response.text.strip()
+                    if raw_text.startswith("```json"):
+                        raw_text = raw_text[7:]
+                    if raw_text.startswith("```"):
+                        raw_text = raw_text[3:]
+                    if raw_text.endswith("```"):
+                        raw_text = raw_text[:-3]
+                    data = json.loads(raw_text.strip())
+
+                    color_map = {"Low": "#10B981", "Medium": "#F59E0B", "High": "#EF4444", "Critical": "#7F1D1D"}
+                    exp = ThreatExplanation(
+                        activity=activity,
+                        source_ip=source_ip,
+                        packets=packets,
+                        risk=risk,
+                        severity_color=color_map.get(risk, "#EF4444"),
+                        summary=data.get("summary", ""),
+                        mechanism=data.get("mechanism", ""),
+                        potential_impact=data.get("potential_impact", ""),
+                        mitre_technique=data.get("mitre_technique", incident.get("mitre_id", "T1071")),
+                        recommended_focus=data.get("recommended_focus", ""),
+                        threat_hypotheses=data.get("threat_hypotheses", ""),
+                        investigation_steps=data.get("investigation_steps", []),
+                        containment_recommendations=data.get("containment_recommendations", []),
+                        custom_details=details,
+                        observed_facts=observed_facts,
+                        model_predictions=model_predictions,
+                        provider="google_gemini",
+                        ai_disclaimer="Generated by Google Gemini AI Copilot based on stored evidence. Requires human analyst validation."
+                    )
+                    return exp.to_dict()
+            except Exception as e:
+                logger.warning(f"Gemini incident explanation failed: {e}. Falling back to deterministic knowledge base.")
+
+        # Fallback explanation enriched with actual incident memory
+        res = self.explain_threat(activity, source_ip, packets, risk, details)
+        res["observed_facts"] = observed_facts
+        res["model_predictions"] = model_predictions
+        res["threat_hypotheses"] = (
+            f"Malicious Hypothesis: Host {source_ip} is conducting unauthorized {activity} against {incident.get('destination_ip')}.\n"
+            f"Benign Hypothesis: Legitimate system maintenance or administrative scanning tool."
+        )
+        return res
 
     def _call_gemini_explainer(
         self,
@@ -385,6 +516,9 @@ class ThreatExplainer:
             containment_recommendations=data.get("containment_recommendations", []),
             custom_details=details or "",
             investigation_prompt=f"Triage incident {activity} from host {source_ip}.",
+            observed_facts={"source_ip": source_ip, "packet_volume": packets, "activity": activity, "risk": risk},
+            model_predictions={"detection_engine": "Google Gemini Copilot", "risk": risk},
+            threat_hypotheses=f"Hypothesis: Active {activity} probe. Validate against server logs.",
             provider="google_gemini",
             ai_disclaimer="Generated by Google Gemini AI Copilot. Validate before executing disruptive containment."
         )
@@ -418,5 +552,10 @@ class ThreatExplainer:
 
 
 # Helper factory function
+_global_explainer = None
+
 def get_explainer() -> ThreatExplainer:
-    return ThreatExplainer()
+    global _global_explainer
+    if _global_explainer is None:
+        _global_explainer = ThreatExplainer()
+    return _global_explainer

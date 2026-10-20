@@ -1,7 +1,7 @@
 """
 SentinelAI - Network Threat Detector Module
 Advanced multi-tier threat detection combining behavioral heuristics, stateful temporal
-correlation, known attack signatures, and optional machine learning anomaly scoring.
+correlation, known attack signatures, and Scikit-Learn IsolationForest machine learning anomaly scoring.
 """
 
 from dataclasses import dataclass, asdict, field
@@ -12,6 +12,7 @@ import uuid
 import numpy as np
 import pandas as pd
 from response_engine import sanitize_ip
+from ml_engine import get_ml_engine, MLAnomalyEngine
 
 
 @dataclass
@@ -37,6 +38,17 @@ class Incident:
     detection_method: str = "Heuristic Rule"
     status: str = "Open"   # Open, Investigating, Mitigated, Resolved, False Positive
     supporting_events: List[int] = field(default_factory=list)
+    protocols: List[str] = field(default_factory=lambda: ["TCP"])
+    model_version: str = "v1.0.0"
+    ml_anomaly_score: float = 0.0
+    ml_is_anomaly: bool = False
+    recurrence_count: int = 1
+    analyst_verdict: str = "Unreviewed"
+    analyst_user: Optional[str] = None
+    analyst_reason: Optional[str] = None
+    analyst_timestamp: Optional[str] = None
+    response_history: List[Dict[str, Any]] = field(default_factory=list)
+    raw_evidence: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -46,6 +58,7 @@ class MLAnomalyDetector:
     """
     Transparent Machine Learning Anomaly Detector using Scikit-Learn IsolationForest.
     Clearly distinguishes machine learning anomaly scores from deterministic rule-based logic.
+    Maintains 100% backwards compatibility with earlier SentinelAI test suites.
     """
 
     def __init__(self, contamination: float = 0.15, random_state: int = 42):
@@ -62,7 +75,6 @@ class MLAnomalyDetector:
         standard-deviation profiling if scikit-learn is not present in runtime environment.
         """
         if len(features) < 4:
-            # Need minimum observations to train reliably
             return self
 
         try:
@@ -124,7 +136,7 @@ class ThreatDetector:
     """
     Defensive network threat detection engine implementing stateful temporal correlation,
     volumetric anomaly detection, port scan heuristics, brute-force tracking,
-    and unusual traffic burst detection.
+    and unusual traffic burst detection combined with ML anomaly intelligence.
     """
 
     def __init__(
@@ -203,7 +215,8 @@ class ThreatDetector:
             }
         }
 
-        # Initialize optional machine learning classifier
+        # Initialize ML anomaly engine
+        self.ml_engine = get_ml_engine()
         self.ml_detector = MLAnomalyDetector()
 
     def match_signature(self, activity: Optional[str]) -> Optional[str]:
@@ -280,7 +293,8 @@ class ThreatDetector:
     ) -> Dict[str, Any]:
         """
         Evaluate an individual network traffic flow for anomalies.
-        Provides robust fallbacks for missing or malformed inputs.
+        Provides robust fallbacks for missing or malformed inputs and separates
+        deterministic rule detections from continuous ML anomaly scores.
         """
         safe_ip = sanitize_ip(source_ip)
         try:
@@ -374,6 +388,16 @@ class ThreatDetector:
             details = f"Security alert event observed: {activity}"
             action = "Inspect security alert details and monitor host."
 
+        # Evaluate ML Anomaly Score alongside deterministic rule
+        ml_eval = self.ml_engine.predict_score({
+            "packets": safe_packets,
+            "port": safe_port or 0,
+            "source_ip": safe_ip,
+            "destination_ip": destination_ip or "Target Perimeter",
+            "activity": activity or "Normal Traffic",
+            "risk": raw_risk or "Low"
+        })
+
         return {
             "threat_detected": threat_detected,
             "activity": threat_name,
@@ -386,6 +410,11 @@ class ThreatDetector:
             "source_ip": safe_ip,
             "destination_port": safe_port,
             "packets": safe_packets,
+            "ml_anomaly_score": ml_eval.get("raw_score", 0.0),
+            "ml_is_anomaly": ml_eval.get("is_anomaly", False),
+            "ml_confidence": ml_eval.get("confidence", 0.0),
+            "model_version": self.ml_engine.model_version,
+            "ml_disclaimer": ml_eval.get("disclaimer", "")
         }
 
     def correlate_incidents(self, df: pd.DataFrame) -> List[Incident]:
@@ -402,7 +431,7 @@ class ThreatDetector:
         df_clean = df.copy()
 
         # Normalize column names
-        col_map = {c.lower().replace(" ", "_"): c for c in df_clean.columns}
+        col_map = {str(c).lower().replace(" ", "_"): c for c in df_clean.columns}
         src_col = col_map.get("source_ip", col_map.get("src_ip", "Source IP"))
         dst_col = col_map.get("destination_ip", col_map.get("dest_ip", "Destination IP"))
         port_col = col_map.get("port", col_map.get("destination_port", col_map.get("dest_port", "Port")))
@@ -410,6 +439,7 @@ class ThreatDetector:
         time_col = col_map.get("time", col_map.get("timestamp", "Time"))
         act_col = col_map.get("activity", col_map.get("signature", "Activity"))
         risk_col = col_map.get("risk", col_map.get("severity", "Risk"))
+        proto_col = col_map.get("protocol", col_map.get("proto", "Protocol"))
 
         records = []
         for idx, row in df_clean.iterrows():
@@ -434,6 +464,7 @@ class ThreatDetector:
 
             raw_act = str(row.get(act_col, "Normal Traffic")) if act_col in row else "Normal Traffic"
             raw_risk = str(row.get(risk_col, "Low")) if risk_col in row else "Low"
+            raw_proto = str(row.get(proto_col, "TCP")) if proto_col in row else "TCP"
             ts_str = str(row.get(time_col, "N/A")) if time_col in row else "N/A"
             ts_dt = self.parse_timestamp(ts_str)
 
@@ -446,6 +477,7 @@ class ThreatDetector:
                 "activity": raw_act,
                 "canonical": self.match_signature(raw_act),
                 "risk": raw_risk,
+                "protocol": raw_proto,
                 "ts_str": ts_str,
                 "ts_dt": ts_dt
             })
@@ -476,6 +508,15 @@ class ThreatDetector:
                 conf = min(0.99, round(0.85 + (len(valid_ports) - self.port_scan_threshold) * 0.02 + 0.04, 2))
                 inc_id = f"INC-PORT-{uuid.uuid4().hex[:6].upper()}"
 
+                # Calculate group ML score
+                ml_score = round(float(self.ml_engine.predict_score({
+                    "packets": total_pkts,
+                    "port": valid_ports[0] if valid_ports else 80,
+                    "source_ip": src
+                })["raw_score"]), 4)
+
+                protos = sorted(list(set(r["protocol"] for r in group if r["protocol"])))
+
                 incidents.append(Incident(
                     incident_id=inc_id,
                     category="Port Scan",
@@ -496,7 +537,14 @@ class ThreatDetector:
                     ),
                     recommended_action="Block source IP at edge firewall and verify external perimeter ACL.",
                     detection_method="Stateful Port Diversity Correlation",
-                    supporting_events=probe_rows
+                    supporting_events=probe_rows,
+                    protocols=protos or ["TCP"],
+                    model_version=self.ml_engine.model_version,
+                    ml_anomaly_score=ml_score,
+                    ml_is_anomaly=True,
+                    recurrence_count=1,
+                    analyst_verdict="Unreviewed",
+                    raw_evidence=f"Probed ports: {valid_ports[:8]}; total packets: {total_pkts}"
                 ))
                 claimed_events.update(probe_rows)
 
@@ -528,6 +576,14 @@ class ThreatDetector:
                     sev = "Critical" if any(r["risk"] == "Critical" for r in p_rows) or len(p_rows) >= 10 else "High"
                     inc_id = f"INC-AUTH-{uuid.uuid4().hex[:6].upper()}"
 
+                    ml_score = round(float(self.ml_engine.predict_score({
+                        "packets": total_pkts,
+                        "port": auth_p,
+                        "source_ip": src
+                    })["raw_score"]), 4)
+
+                    protos = sorted(list(set(r["protocol"] for r in p_rows if r["protocol"])))
+
                     incidents.append(Incident(
                         incident_id=inc_id,
                         category="Brute Force",
@@ -548,7 +604,14 @@ class ThreatDetector:
                         ),
                         recommended_action="Immediately quarantine host IP and verify MFA status on targeted service.",
                         detection_method="Stateful Authentication Threshold Correlation",
-                        supporting_events=auth_indices
+                        supporting_events=auth_indices,
+                        protocols=protos or ["TCP"],
+                        model_version=self.ml_engine.model_version,
+                        ml_anomaly_score=ml_score,
+                        ml_is_anomaly=True,
+                        recurrence_count=1,
+                        analyst_verdict="Unreviewed",
+                        raw_evidence=f"Repeated auth attempts on port {auth_p}; packets: {total_pkts}"
                     ))
                     claimed_events.update(auth_indices)
 
@@ -582,6 +645,14 @@ class ThreatDetector:
                 sev = "High" if any(r["risk"] in ("High", "Critical") for r in burst_alerts) else "Medium"
                 inc_id = f"INC-BURST-{uuid.uuid4().hex[:6].upper()}"
 
+                ml_score = round(float(self.ml_engine.predict_score({
+                    "packets": total_pkts,
+                    "port": p or 80,
+                    "source_ip": rep_src
+                })["raw_score"]), 4)
+
+                protos = sorted(list(set(r["protocol"] for r in burst_alerts if r["protocol"])))
+
                 incidents.append(Incident(
                     incident_id=inc_id,
                     category="Traffic Burst",
@@ -602,7 +673,14 @@ class ThreatDetector:
                     ),
                     recommended_action="Inspect application connection rates and apply reverse proxy rate-limiting.",
                     detection_method="Traffic Burst Correlation",
-                    supporting_events=burst_indices
+                    supporting_events=burst_indices,
+                    protocols=protos or ["TCP"],
+                    model_version=self.ml_engine.model_version,
+                    ml_anomaly_score=ml_score,
+                    ml_is_anomaly=True,
+                    recurrence_count=1,
+                    analyst_verdict="Unreviewed",
+                    raw_evidence=f"Burst alerts directed to {dst}:{p}; total packets: {total_pkts}"
                 ))
                 claimed_events.update(burst_indices)
 
@@ -620,6 +698,14 @@ class ThreatDetector:
                 last_ts = unclaimed[-1]["ts_str"]
                 ports = sorted(list(set(r["port"] for r in unclaimed if r["port"] is not None)))
                 inc_id = f"INC-DDOS-{uuid.uuid4().hex[:6].upper()}"
+
+                ml_score = round(float(self.ml_engine.predict_score({
+                    "packets": total_pkts,
+                    "port": ports[0] if ports else 80,
+                    "source_ip": src
+                })["raw_score"]), 4)
+
+                protos = sorted(list(set(r["protocol"] for r in unclaimed if r["protocol"])))
 
                 incidents.append(Incident(
                     incident_id=inc_id,
@@ -641,7 +727,14 @@ class ThreatDetector:
                     ),
                     recommended_action="Engage upstream DDoS scrubbing and activate rate-limiting filters.",
                     detection_method="Volumetric Threshold Correlation",
-                    supporting_events=surge_indices
+                    supporting_events=surge_indices,
+                    protocols=protos or ["TCP"],
+                    model_version=self.ml_engine.model_version,
+                    ml_anomaly_score=ml_score,
+                    ml_is_anomaly=True,
+                    recurrence_count=1,
+                    analyst_verdict="Unreviewed",
+                    raw_evidence=f"Volumetric surge: {total_pkts} packets over {len(surge_indices)} flows"
                 ))
                 claimed_events.update(surge_indices)
 
@@ -650,7 +743,7 @@ class ThreatDetector:
     def detect_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Enrich a traffic DataFrame with automated threat detection flags, risk ratings,
-        MITRE technique IDs, and incident correlation metadata.
+        MITRE technique IDs, ML anomaly scores, and incident correlation metadata.
         Maintains 100% backwards compatibility with SentinelAI dashboard components.
         """
         if df.empty:
@@ -673,8 +766,11 @@ class ThreatDetector:
         rule_ids = []
         mitre_ids = []
         incident_ids = []
+        ml_scores = []
+        ml_anomalies = []
+        ml_confidences = []
 
-        col_map = {c.lower().replace(" ", "_"): c for c in df_processed.columns}
+        col_map = {str(c).lower().replace(" ", "_"): c for c in df_processed.columns}
         src_col = col_map.get("source_ip", col_map.get("src_ip", "Source IP"))
         dst_col = col_map.get("destination_ip", col_map.get("dest_ip", "Destination IP"))
         port_col = col_map.get("port", col_map.get("destination_port", col_map.get("dest_port", "Port")))
@@ -694,6 +790,9 @@ class ThreatDetector:
                 rule_ids.append(matched_inc.rule_id)
                 mitre_ids.append(matched_inc.mitre_id)
                 incident_ids.append(matched_inc.incident_id)
+                ml_scores.append(matched_inc.ml_anomaly_score)
+                ml_anomalies.append(matched_inc.ml_is_anomaly)
+                ml_confidences.append(0.85)
                 continue
 
             # Otherwise, evaluate row individually
@@ -732,7 +831,11 @@ class ThreatDetector:
             rule_ids.append(eval_result["rule_id"])
             mitre_ids.append(eval_result["mitre_id"])
             incident_ids.append(f"INC-{idx+1:04d}" if eval_result["threat_detected"] else "-")
+            ml_scores.append(eval_result.get("ml_anomaly_score", 0.0))
+            ml_anomalies.append(eval_result.get("ml_is_anomaly", False))
+            ml_confidences.append(eval_result.get("ml_confidence", 0.0))
 
+        # Core backwards-compatible columns
         df_processed["Threat Detected"] = threat_flags
         df_processed["Activity"] = activities
         df_processed["Risk"] = risks
@@ -742,9 +845,20 @@ class ThreatDetector:
         df_processed["MITRE ID"] = mitre_ids
         df_processed["Incident ID"] = incident_ids
 
+        # ML Threat Intelligence Columns
+        df_processed["ML Anomaly Score"] = ml_scores
+        df_processed["ML Anomaly"] = ml_anomalies
+        df_processed["ML Confidence"] = ml_confidences
+        df_processed["ML Model Version"] = self.ml_engine.model_version
+
         return df_processed
 
 
 # Helper factory function
+_global_detector = None
+
 def get_detector() -> ThreatDetector:
-    return ThreatDetector()
+    global _global_detector
+    if _global_detector is None:
+        _global_detector = ThreatDetector()
+    return _global_detector

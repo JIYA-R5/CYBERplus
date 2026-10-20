@@ -1,6 +1,7 @@
 """
 SentinelAI - Automated Tests for Vercel Cloud Serverless API
-Verifies FastAPI endpoints, dashboard rendering, containment actions, and sample ingestion.
+Verifies FastAPI endpoints, dashboard rendering, containment actions, sample ingestion,
+ML threat intelligence endpoints, analyst feedback, and active blocks.
 """
 
 import pytest
@@ -61,3 +62,110 @@ def test_vercel_simulation_stream(client):
     assert data["status"] == "active"
     assert len(data["events"]) > 0
     assert all("SIMULATED" in e["Telemetry Type"] for e in data["events"])
+
+def test_vercel_ml_status(client):
+    response = client.get("/api/ml/status")
+    assert response.status_code == 200
+    data = response.json()
+    assert "active_model_version" in data
+    assert "is_fitted" in data
+    assert "metrics" in data
+
+def test_vercel_ml_predict(client):
+    payload = {
+        "packets": 120,
+        "port": 443,
+        "source_ip": "192.168.1.50"
+    }
+    response = client.post("/api/ml/predict", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert "is_anomaly" in data
+    assert "raw_score" in data
+    assert "confidence" in data
+    assert "NOT proof" in data.get("disclaimer", "")
+
+def test_vercel_analyst_verdict(client):
+    # Retrieve incidents first to get an existing ID
+    inc_res = client.get("/api/incidents")
+    assert inc_res.status_code == 200
+    incs = inc_res.json()
+    assert len(incs) > 0
+    target_id = incs[0]["incident_id"]
+
+    verdict_payload = {
+        "verdict": "True Positive",
+        "analyst_user": "Cloud SOC Analyst",
+        "reason": "Corroborated by NetFlow packet counts"
+    }
+    resp = client.post(f"/api/incidents/{target_id}/verdict", json=verdict_payload)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "success"
+    assert data["verdict"] == "True Positive"
+
+def test_vercel_incident_explain(client):
+    inc_res = client.get("/api/incidents")
+    incs = inc_res.json()
+    target_id = incs[0]["incident_id"]
+
+    resp = client.get(f"/api/incidents/{target_id}/explain")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "summary" in data
+    assert "mechanism" in data
+    assert "mitre_technique" in data
+    assert "observed_facts" in data
+
+def test_vercel_blocks_list(client):
+    resp = client.get("/api/blocks")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "active_blocks" in data
+    assert "recently_expired" in data
+
+def test_vercel_ml_retrain_and_revert(client):
+    retrain_payload = {
+        "synthetic_samples": 150,
+        "contamination": 0.12
+    }
+    resp = client.post("/api/ml/retrain", json=retrain_payload)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "success"
+    assert "new_model_version" in data
+    assert "metrics" in data
+
+    # Revert to baseline
+    revert_payload = {
+        "version": "isolation_forest_v1.0.0"
+    }
+    rev_resp = client.post("/api/ml/revert", json=revert_payload)
+    assert rev_resp.status_code == 200
+    rev_data = rev_resp.json()
+    assert rev_data["status"] == "success"
+    assert rev_data["active_model_version"] == "isolation_forest_v1.0.0"
+
+def test_vercel_blocks_rollback(client):
+    rollback_payload = {
+        "block_id": "BLK-NONEXISTENT",
+        "admin_user": "Cloud Admin",
+        "reason": "Test rollback request"
+    }
+    resp = client.post("/api/blocks/rollback", json=rollback_payload)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "status" in data
+
+def test_vercel_retention_purge(client):
+    purge_payload = {
+        "retention_days": 90,
+        "admin_user": "Cloud Admin"
+    }
+    resp = client.post("/api/retention/purge", json=purge_payload)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "success"
+    assert "result" in data
+
+
