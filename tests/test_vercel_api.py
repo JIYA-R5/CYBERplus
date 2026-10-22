@@ -169,3 +169,82 @@ def test_vercel_retention_purge(client):
     assert "result" in data
 
 
+def test_privileged_routes_admin_key_enforcement(client, monkeypatch):
+    """Verify that privileged administrative endpoints enforce authentication when SENTINEL_ADMIN_KEY is set."""
+    monkeypatch.setenv("SENTINEL_ADMIN_KEY", "super-secret-admin-key-789")
+
+    # 1. Unauthenticated request to privileged endpoint should fail with 401
+    unauth_resp = client.post("/api/contain", json={
+        "incident_id": "INC-TEST-AUTH",
+        "target_ip": "198.51.100.99",
+        "action_type": "Quarantine Host"
+    })
+    assert unauth_resp.status_code == 401
+    assert "Unauthorized: Valid X-Sentinel-Admin-Key" in unauth_resp.json()["detail"]
+
+    # 2. Authenticated with X-Sentinel-Admin-Key header should succeed
+    auth_resp = client.post(
+        "/api/contain",
+        json={
+            "incident_id": "INC-TEST-AUTH",
+            "target_ip": "198.51.100.99",
+            "action_type": "Quarantine Host"
+        },
+        headers={"X-Sentinel-Admin-Key": "super-secret-admin-key-789"}
+    )
+    assert auth_resp.status_code == 200
+    assert auth_resp.json()["result"]["status"] == "SUCCESS"
+
+    # 3. Authenticated with Bearer token should succeed
+    bearer_resp = client.post(
+        "/api/contain",
+        json={
+            "incident_id": "INC-TEST-AUTH",
+            "target_ip": "198.51.100.99",
+            "action_type": "Quarantine Host"
+        },
+        headers={"Authorization": "Bearer super-secret-admin-key-789"}
+    )
+    assert bearer_resp.status_code == 200
+
+
+def test_cloud_dashboard_light_theme_and_accessible_labels(client):
+    """Verify cloud dashboard renders the accessible light theme and plain-English navigation."""
+    resp = client.get("/")
+    assert resp.status_code == 200
+    html = resp.text
+    # Verify core color palette and light theme tokens
+    assert "#F4F7FB" in html
+    assert "#172B4D" in html
+    assert "#2457A7" in html
+    # Verify approachable navigation and titles
+    assert "Your Security Assistant" in html
+    assert "Understand suspicious activity and decide what to do next" in html
+    assert "Home" in html
+    assert "Threats" in html
+    assert "Protection" in html
+    assert "Activity" in html
+    # Verify XSS protection function is embedded
+    assert "escapeHTML" in html
+    # Verify honest simulation notices
+    assert "Simulation Only" in html or "simulation only" in html.lower()
+
+
+def test_containment_honest_simulation_notice(client):
+    """Verify live-mode containment requests explicitly state simulation only without claiming OS rule execution."""
+    payload = {
+        "incident_id": "INC-HONEST-SIM",
+        "target_ip": "198.51.100.55",
+        "action_type": "Quarantine Host",
+        "dry_run": False,
+        "admin_approved": True
+    }
+    resp = client.post("/api/contain", json=payload)
+    assert resp.status_code == 200
+    data = resp.json()
+    result = data["result"]
+    assert result["result"] == "SIMULATION_ONLY_LIVE_NOT_IMPLEMENTED"
+    assert "Live firewall enforcement is not implemented; simulation only" in result["details"]
+
+
+

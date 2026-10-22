@@ -143,6 +143,39 @@ class LiveMonitoringSimulator:
             self._events_buffer.clear()
             self._counter = 0
 
+    def inject_attack(self, attack_type: str = "port_scan"):
+        """Inject specific laboratory attack scenario events into the telemetry buffer."""
+        with self._lock:
+            now_ts = datetime.datetime.now().strftime("%H:%M:%S")
+            if attack_type == "port_scan":
+                for p in [21, 22, 23, 80, 443, 3389]:
+                    self._counter += 1
+                    self._events_buffer.append({
+                        "Event ID": f"SIM-{self._counter:05d}",
+                        "Time": now_ts,
+                        "Source IP": "192.168.1.155",
+                        "Destination IP": "10.0.0.1",
+                        "Port": p,
+                        "Packets": random.randint(180, 320),
+                        "Activity": "Port Scan",
+                        "Risk": "High",
+                        "Telemetry Type": "SIMULATED: Lab Scenario"
+                    })
+            elif attack_type == "brute_force":
+                for _ in range(5):
+                    self._counter += 1
+                    self._events_buffer.append({
+                        "Event ID": f"SIM-{self._counter:05d}",
+                        "Time": now_ts,
+                        "Source IP": "192.168.1.188",
+                        "Destination IP": "10.0.0.2",
+                        "Port": 22,
+                        "Packets": random.randint(300, 450),
+                        "Activity": "Brute Force",
+                        "Risk": "High",
+                        "Telemetry Type": "SIMULATED: Lab Scenario"
+                    })
+
 
 # Global singleton instance for Streamlit session continuity
 _simulator_instance = None

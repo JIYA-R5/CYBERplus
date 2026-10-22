@@ -342,13 +342,14 @@ class ResponseEngine:
             )
             verification_status = "VERIFIED_DRY_RUN"
         else:
-            # Safe laboratory verification: verify command syntax without modifying host OS
-            result_str = "VERIFIED_CONTAINED"
+            # Defensive safety guard: Live OS firewall modification is not implemented
+            result_str = "SIMULATION_ONLY_LIVE_NOT_IMPLEMENTED"
             details_str = (
-                f"Live authorized containment applied to {safe_ip} ({rule_type}, {duration_minutes}m). "
-                f"Approved by {operator}. Justification: {justification or 'Standard Threat Containment'}."
+                f"Live firewall enforcement is not implemented; simulation only. "
+                f"Defensive rule prepared for {safe_ip} ({rule_type}, {duration_minutes}m). "
+                f"Approved by {operator}. No changes were made to the operating system firewall."
             )
-            verification_status = "VERIFIED_ACTIVE"
+            verification_status = "SIMULATION_ONLY_UNVERIFIED"
 
         audit_id = None
         block_id = None

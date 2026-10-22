@@ -10,12 +10,27 @@ import os
 import json
 import logging
 from pydantic import BaseModel, Field
-from dotenv import load_dotenv
+from dotenv import load_dotenv, dotenv_values
 
-# Load local environment variables from .env.local or .env if available
-load_dotenv(".env.local")
-load_dotenv(".env")
-load_dotenv()
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+def reload_environment():
+    """Load credentials from .env and .env.local without requiring website input."""
+    # Check .env first, then .env.local for overrides
+    for env_name in [".env", ".env.local"]:
+        env_file = os.path.join(BASE_DIR, env_name)
+        if os.path.isfile(env_file):
+            try:
+                vals = dotenv_values(env_file)
+                for k, v in vals.items():
+                    if v and str(v).strip() and str(v).strip() not in ["your_gemini_api_key_here"]:
+                        os.environ[k] = str(v).strip()
+            except Exception:
+                pass
+    load_dotenv()
+
+# Initial load from environment files
+reload_environment()
 
 logger = logging.getLogger("SentinelAI.Explainer")
 
@@ -66,20 +81,28 @@ class ThreatExplainer:
     """
 
     def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key or os.getenv("GEMINI_API_KEY", "").strip()
+        reload_environment()
+        raw_key = api_key if api_key is not None else (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or "")
+        self.api_key = raw_key.strip().strip("'\"")
         self.gemini_client = None
         self.is_gemini_active = False
 
-        # Attempt to initialize official google.genai client if API key is present
-        if self.api_key and self.api_key not in ["your_gemini_api_key_here", "INVALID_TEST_KEY_12345"]:
+        self._initialize_client()
+
+    def _initialize_client(self):
+        """Attempt to initialize official google.genai client if API key is present."""
+        if self.api_key and self.api_key not in ["your_gemini_api_key_here", "INVALID_TEST_KEY_12345", ""]:
             try:
                 from google import genai
                 self.gemini_client = genai.Client(api_key=self.api_key)
                 self.is_gemini_active = True
-                logger.info("Google Gemini GenAI client initialized successfully.")
+                logger.info("Google Gemini GenAI client initialized successfully from environment.")
             except Exception as e:
                 logger.warning(f"Could not initialize Google GenAI client: {e}. Defaulting to deterministic fallback.")
                 self.is_gemini_active = False
+        else:
+            self.gemini_client = None
+            self.is_gemini_active = False
 
         # Deterministic local knowledge base
         self.threat_knowledge_base = {
@@ -558,4 +581,11 @@ def get_explainer() -> ThreatExplainer:
     global _global_explainer
     if _global_explainer is None:
         _global_explainer = ThreatExplainer()
+    elif not _global_explainer.is_gemini_active:
+        # Check if user added key to .env/.env.local while app is running
+        reload_environment()
+        new_key = (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or "").strip().strip("'\"")
+        if new_key and new_key not in ["your_gemini_api_key_here", "INVALID_TEST_KEY_12345", ""]:
+            _global_explainer.api_key = new_key
+            _global_explainer._initialize_client()
     return _global_explainer

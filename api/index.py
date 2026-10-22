@@ -1,6 +1,6 @@
 """
 SentinelAI - Serverless Cloud API & SOC Web Application for Vercel
-Serves the full SentinelAI cybersecurity dashboard, threat detection pipeline,
+Serves the approachable SentinelAI security assistant dashboard, threat detection pipeline,
 AI threat copilot, automated containment playbooks, and live telemetry simulation.
 """
 
@@ -9,7 +9,7 @@ import sys
 import json
 import datetime
 from typing import Dict, Any, List, Optional
-from fastapi import FastAPI, UploadFile, File, Form, Request, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, Request, HTTPException, Depends, Header
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel
 
@@ -17,6 +17,15 @@ from pydantic import BaseModel
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
+
+from dotenv import load_dotenv
+
+# Ensure local environment (.env.local / .env) is loaded directly
+if os.path.isfile(os.path.join(ROOT_DIR, ".env")):
+    load_dotenv(os.path.join(ROOT_DIR, ".env"), override=False)
+if os.path.isfile(os.path.join(ROOT_DIR, ".env.local")):
+    load_dotenv(os.path.join(ROOT_DIR, ".env.local"), override=True)
+load_dotenv()
 
 from detector import ThreatDetector, get_detector
 from analyzer import TrafficAnalyzer, get_analyzer
@@ -28,8 +37,8 @@ from live_monitor import LiveMonitoringSimulator, get_live_simulator
 
 # Initialize FastAPI application
 app = FastAPI(
-    title="SentinelAI - Enterprise SOC Threat Defense Center",
-    description="Autonomous behavioral threat detection, MITRE ATT&CK correlation, and automated incident containment.",
+    title="SentinelAI Cloud SOC",
+    description="Intrusion Detection, Behavioral Correlation & Incident Response API",
     version="2.5.0"
 )
 
@@ -52,7 +61,9 @@ class ContainmentRequest(BaseModel):
     incident_id: str
     target_ip: str
     action_type: str = "Quarantine Host"
-    operator: str = "SOC Cloud Analyst"
+    operator: str = "Security Assistant User"
+    dry_run: bool = True
+    admin_approved: bool = False
 
 class CopilotQueryRequest(BaseModel):
     incident_id: str
@@ -64,8 +75,8 @@ class CopilotQueryRequest(BaseModel):
 
 class VerdictRequest(BaseModel):
     verdict: str
-    analyst_user: str = "SOC Cloud Analyst"
-    reason: str = "Confirmed via threat triage"
+    analyst_user: str = "Security Analyst"
+    reason: str = "Reviewed threat activity"
 
 class MLPredictRequest(BaseModel):
     packets: int
@@ -79,19 +90,50 @@ class MLRetrainRequest(BaseModel):
     version_tag: Optional[str] = None
     sample_count: int = 300
     contamination: Optional[float] = 0.15
-    trained_by: str = "SOC Admin"
+    trained_by: str = "Security Engineer"
 
 class MLRevertRequest(BaseModel):
     version: str
 
-
 class RollbackBlockRequest(BaseModel):
     block_id: str
-    operator: str = "SOC Admin"
+    operator: str = "Security Assistant User"
 
 class RetentionPurgeRequest(BaseModel):
     retention_days: int = 30
-    operator: str = "SOC Admin"
+    operator: str = "Security Assistant User"
+
+
+# ------------------------------------------------------------------------------
+# Server-Side Authorization Dependency for Privileged Endpoints
+# ------------------------------------------------------------------------------
+def verify_admin_authorization(
+    x_sentinel_admin_key: Optional[str] = Header(None, alias="X-Sentinel-Admin-Key"),
+    authorization: Optional[str] = Header(None)
+):
+    """
+    Enforce server-side authorization on privileged administrative routes.
+    If SENTINEL_ADMIN_KEY is configured in the environment, verifies the header or bearer token.
+    If running in public cloud mode (VERCEL set), requires the key.
+    In local development mode without a configured key, permits access.
+    """
+    admin_key = os.environ.get("SENTINEL_ADMIN_KEY", "").strip()
+    if admin_key:
+        token = x_sentinel_admin_key
+        if not token and authorization and authorization.startswith("Bearer "):
+            token = authorization.split("Bearer ", 1)[1].strip()
+        if not token or token != admin_key:
+            raise HTTPException(
+                status_code=401,
+                detail="Unauthorized: Valid X-Sentinel-Admin-Key header required for privileged operations."
+            )
+    elif os.environ.get("VERCEL"):
+        if not x_sentinel_admin_key:
+            raise HTTPException(
+                status_code=401,
+                detail="Security policy: Administrator key authentication required on cloud deployments."
+            )
+    return True
 
 
 # ------------------------------------------------------------------------------
@@ -113,30 +155,37 @@ def get_system_status():
     incidents = db.get_incidents()
     critical_count = sum(1 for i in incidents if i.get("severity") == "Critical")
     high_count = sum(1 for i in incidents if i.get("severity") == "High")
+    unreviewed_count = sum(1 for i in incidents if i.get("analyst_verdict") in ("Unreviewed", None))
+    confirmed_count = sum(1 for i in incidents if i.get("analyst_verdict") == "True Positive")
 
     defcon_level = 1 if critical_count > 0 else (2 if high_count > 0 else 5)
     defcon_label = "DEFCON 1 - CRITICAL" if critical_count > 0 else ("DEFCON 2 - HIGH" if high_count > 0 else "DEFCON 5 - NOMINAL")
     risk_score = 92 if critical_count > 0 else (75 if high_count > 0 else 25)
 
-    # Executive Briefing
     sample_csv_path = os.path.join(ROOT_DIR, "sample_traafic.csv")
     import pandas as pd
     base_df = pd.read_csv(sample_csv_path) if os.path.exists(sample_csv_path) else pd.DataFrame()
     exec_summary = explainer.generate_executive_summary(base_df)
-
     total_pkts = int(base_df["Packets"].sum()) if not base_df.empty and "Packets" in base_df.columns else 12500
+
+    active_blocks = db.get_active_blocks()
+    active_block_count = sum(1 for b in active_blocks if b.get("status") == "Active")
 
     return {
         "defcon_level": defcon_level,
         "defcon_label": defcon_label,
         "active_incidents": len(incidents),
+        "unreviewed_count": unreviewed_count,
+        "confirmed_count": confirmed_count,
+        "active_block_count": active_block_count,
         "critical_count": critical_count,
         "high_count": high_count,
         "telemetry_flows": len(base_df) if not base_df.empty else 10,
         "total_packets": total_pkts,
         "threat_index": risk_score,
         "ai_executive_summary": exec_summary,
-        "gemini_active": explainer.is_gemini_active
+        "gemini_active": explainer.is_gemini_active,
+        "sensor_mode": "Demo Simulation" if incidents else "Idle"
     }
 
 
@@ -145,7 +194,7 @@ def list_incidents():
     return db.get_incidents()
 
 
-@app.post("/api/contain")
+@app.post("/api/contain", dependencies=[Depends(verify_admin_authorization)])
 def execute_containment(req: ContainmentRequest):
     target_ip = sanitize_ip(req.target_ip)
     if target_ip == "0.0.0.0" and req.target_ip.strip() not in ["0.0.0.0", "0.0.0.0/0"]:
@@ -155,7 +204,8 @@ def execute_containment(req: ContainmentRequest):
         incident_id=req.incident_id,
         action_type=req.action_type,
         target_ip=target_ip,
-        dry_run=True,
+        dry_run=req.dry_run,
+        admin_approved=req.admin_approved,
         operator=req.operator,
         db_manager=db
     )
@@ -249,13 +299,13 @@ def get_audit_trail():
     return db.get_audit_logs(limit=50)
 
 
-@app.post("/api/reset-demo")
+@app.post("/api/reset-demo", dependencies=[Depends(verify_admin_authorization)])
 def reset_demo_database():
     db.reset_demo_data()
     return {"status": "success", "message": "Demo incidents restored"}
 
 
-@app.post("/api/incidents/{incident_id}/verdict")
+@app.post("/api/incidents/{incident_id}/verdict", dependencies=[Depends(verify_admin_authorization)])
 def submit_verdict(incident_id: str, req: VerdictRequest):
     inc = db.get_incident_by_id(incident_id)
     if not inc:
@@ -311,7 +361,7 @@ def predict_ml(req: MLPredictRequest):
     })
 
 
-@app.post("/api/ml/retrain")
+@app.post("/api/ml/retrain", dependencies=[Depends(verify_admin_authorization)])
 def retrain_ml(req: MLRetrainRequest):
     from ml_engine import get_ml_engine, MLAnomalyEngine
     ml_eng = get_ml_engine()
@@ -341,7 +391,7 @@ def retrain_ml(req: MLRetrainRequest):
     }
 
 
-@app.post("/api/ml/revert")
+@app.post("/api/ml/revert", dependencies=[Depends(verify_admin_authorization)])
 def revert_ml(req: MLRevertRequest):
     from ml_engine import get_ml_engine
     ml_eng = get_ml_engine()
@@ -359,57 +409,54 @@ def list_blocks():
     return {"active_blocks": blocks, "recently_expired": expired}
 
 
-@app.post("/api/blocks/rollback")
+@app.post("/api/blocks/rollback", dependencies=[Depends(verify_admin_authorization)])
 def rollback_block_endpoint(req: RollbackBlockRequest):
     res = db.rollback_block(block_id=req.block_id, operator=req.operator)
     return res
 
 
-@app.post("/api/retention/purge")
+@app.post("/api/retention/purge", dependencies=[Depends(verify_admin_authorization)])
 def purge_retention(req: RetentionPurgeRequest):
     res = db.apply_data_retention(retention_days=req.retention_days, operator=req.operator)
     return {"status": "success", "result": res}
 
 
 # ------------------------------------------------------------------------------
-# FRONTEND HTML DASHBOARD (Cyberpunk / Modern High-Aesthetic SOC UI)
+# FRONTEND HTML DASHBOARD (Approachable Light Theme & Simple Navigation)
 # ------------------------------------------------------------------------------
 DASHBOARD_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SentinelAI - Enterprise Threat Defense SOC</title>
+  <title>SentinelAI — Your Security Assistant (Enterprise Threat Defense SOC)</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
     :root {
-      --bg-primary: #0a0f1d;
-      --bg-card: #111827;
-      --bg-card-hover: #1f293d;
-      --border-color: #1e293b;
-      --accent-blue: #3b82f6;
-      --accent-cyan: #06b6d4;
-      --accent-red: #ef4444;
-      --accent-orange: #f97316;
-      --accent-green: #10b981;
-      --text-main: #f8fafc;
-      --text-muted: #94a3b8;
+      --bg-app: #F4F7FB;
+      --card-bg: #FFFFFF;
+      --text-primary: #172B4D;
+      --text-secondary: #667085;
+      --accent-primary: #2457A7;
+      --status-success: #16835D;
+      --status-warning: #B7791F;
+      --status-danger: #C0392B;
+      --border-color: #E2E8F0;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      background-color: var(--bg-primary);
-      color: var(--text-main);
-      font-family: 'Inter', -apple-system, sans-serif;
+      background-color: var(--bg-app);
+      color: var(--text-primary);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       min-height: 100vh;
       display: flex;
       flex-direction: column;
     }
     header {
-      background: rgba(17, 24, 39, 0.85);
-      backdrop-filter: blur(12px);
+      background: #FFFFFF;
       border-bottom: 1px solid var(--border-color);
       padding: 16px 32px;
       display: flex;
@@ -418,6 +465,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       position: sticky;
       top: 0;
       z-index: 50;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.03);
     }
     .brand {
       display: flex;
@@ -425,196 +473,136 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       gap: 12px;
     }
     .brand h1 {
-      font-size: 1.35rem;
-      font-weight: 800;
-      letter-spacing: -0.5px;
-      background: linear-gradient(135deg, #60a5fa 0%, #38bdf8 100%);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: var(--accent-primary);
     }
-    .brand span {
-      background: #1e3a8a;
-      color: #93c5fd;
-      padding: 2px 8px;
-      border-radius: 4px;
-      font-size: 0.75rem;
-      font-weight: 600;
-      border: 1px solid #2563eb;
-    }
-    .header-status {
-      display: flex;
-      align-items: center;
-      gap: 16px;
-    }
-    .defcon-pill {
-      padding: 6px 14px;
-      border-radius: 8px;
-      font-weight: 800;
-      font-size: 0.85rem;
-      letter-spacing: 0.5px;
-      box-shadow: 0 0 15px rgba(239, 68, 68, 0.35);
-      background-color: var(--accent-red);
-      color: white;
+    .brand-sub {
+      font-size: 0.82rem;
+      color: var(--text-secondary);
     }
     .tabs-bar {
-      background: #0f172a;
+      background: #FFFFFF;
       border-bottom: 1px solid var(--border-color);
       display: flex;
-      gap: 8px;
+      gap: 6px;
       padding: 0 32px;
-      overflow-x: auto;
     }
     .tab-btn {
       background: none;
       border: none;
-      color: var(--text-muted);
+      color: var(--text-secondary);
       padding: 14px 18px;
       font-weight: 600;
-      font-size: 0.9rem;
+      font-size: 0.92rem;
       cursor: pointer;
       border-bottom: 3px solid transparent;
-      transition: all 0.2s ease;
+      transition: all 0.15s ease;
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 6px;
     }
-    .tab-btn:hover { color: var(--text-main); }
+    .tab-btn:hover { color: var(--accent-primary); }
     .tab-btn.active {
-      color: #60a5fa;
-      border-bottom-color: #3b82f6;
+      color: var(--accent-primary);
+      border-bottom-color: var(--accent-primary);
     }
     main {
       flex: 1;
-      padding: 28px 32px;
-      max-width: 1440px;
+      padding: 24px 32px;
+      max-width: 1400px;
       margin: 0 auto;
       width: 100%;
     }
     .tab-content { display: none; }
-    .tab-content.active { display: block; animation: fadeIn 0.25s ease; }
-    @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+    .tab-content.active { display: block; animation: fadeIn 0.2s ease; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: translateY(0); } }
 
-    /* Metric Cards */
+    /* Cards */
+    .sa-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 20px 24px;
+      margin-bottom: 20px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+    }
     .metrics-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
       gap: 16px;
-      margin-bottom: 24px;
+      margin-bottom: 20px;
     }
     .metric-card {
-      background: var(--bg-card);
+      background: #FFFFFF;
       border: 1px solid var(--border-color);
-      border-radius: 12px;
-      padding: 20px;
-      position: relative;
-      overflow: hidden;
-    }
-    .metric-card::before {
-      content: "";
-      position: absolute;
-      top: 0; left: 0; right: 0; height: 3px;
-      background: linear-gradient(90deg, #3b82f6, #06b6d4);
+      border-radius: 8px;
+      padding: 18px 20px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.02);
     }
     .metric-title {
-      font-size: 0.85rem;
-      color: var(--text-muted);
+      font-size: 0.8rem;
+      color: var(--text-secondary);
       font-weight: 600;
       text-transform: uppercase;
       letter-spacing: 0.5px;
-      margin-bottom: 8px;
+      margin-bottom: 6px;
     }
     .metric-val {
-      font-size: 1.85rem;
-      font-weight: 800;
-      color: var(--text-main);
-      display: flex;
-      align-items: baseline;
-      gap: 8px;
-    }
-    .metric-delta {
-      font-size: 0.85rem;
-      color: var(--accent-orange);
-      font-weight: 600;
+      font-size: 1.8rem;
+      font-weight: 700;
+      color: var(--text-primary);
     }
 
-    /* Executive Alert Banner */
-    .briefing-banner {
-      background: linear-gradient(135deg, rgba(30, 58, 138, 0.3) 0%, rgba(15, 23, 42, 0.6) 100%);
-      border: 1px solid #1e40af;
-      border-radius: 12px;
-      padding: 18px 24px;
-      margin-bottom: 24px;
+    /* Banners & Badges */
+    .banner {
+      background: #EFF6FF;
+      border: 1px solid #BFDBFE;
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin-bottom: 20px;
       display: flex;
-      gap: 16px;
+      gap: 14px;
       align-items: flex-start;
     }
-    .briefing-icon { font-size: 1.6rem; }
-    .briefing-text h3 { font-size: 0.95rem; font-weight: 700; color: #93c5fd; margin-bottom: 4px; }
-    .briefing-text p { font-size: 0.9rem; color: #e2e8f0; line-height: 1.5; }
+    .sa-badge {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 6px;
+      font-size: 0.76rem;
+      font-weight: 600;
+    }
+    .sa-badge-danger { background: #FEE2E2; color: #C0392B; border: 1px solid #FCA5A5; }
+    .sa-badge-warning { background: #FEF3C7; color: #B7791F; border: 1px solid #FCD34D; }
+    .sa-badge-success { background: #D1FAE5; color: #16835D; border: 1px solid #6EE7B7; }
+    .sa-badge-neutral { background: #F1F5F9; color: #667085; border: 1px solid #E2E8F0; }
 
-    /* Tables & Cards */
-    .glass-card {
-      background: var(--bg-card);
-      border: 1px solid var(--border-color);
-      border-radius: 12px;
-      padding: 24px;
-      margin-bottom: 24px;
-    }
-    .card-head {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 18px;
-    }
-    .card-head h2 { font-size: 1.15rem; font-weight: 700; }
+    /* Buttons */
     .btn {
-      background: #2563eb;
+      background: var(--accent-primary);
       color: white;
       border: none;
-      padding: 10px 18px;
-      border-radius: 8px;
+      padding: 8px 16px;
+      border-radius: 6px;
       font-weight: 600;
-      font-size: 0.85rem;
+      font-size: 0.86rem;
       cursor: pointer;
-      transition: background 0.2s;
       display: inline-flex;
       align-items: center;
       gap: 6px;
+      text-decoration: none;
     }
-    .btn:hover { background: #1d4ed8; }
-    .btn-secondary { background: #334155; }
-    .btn-secondary:hover { background: #475569; }
-    .btn-danger { background: #dc2626; }
-    .btn-danger:hover { background: #b91c1c; }
-
-    /* Badges */
-    .badge {
-      display: inline-block;
-      padding: 4px 10px;
-      border-radius: 6px;
-      font-size: 0.75rem;
-      font-weight: 700;
-      text-transform: uppercase;
-    }
-    .badge-critical { background: rgba(239, 68, 68, 0.2); color: #fca5a5; border: 1px solid #ef4444; }
-    .badge-high { background: rgba(249, 115, 22, 0.2); color: #fdba74; border: 1px solid #f97316; }
-    .badge-medium { background: rgba(234, 179, 8, 0.2); color: #fde047; border: 1px solid #eab308; }
-    .badge-low { background: rgba(16, 185, 129, 0.2); color: #86efac; border: 1px solid #10b981; }
+    .btn:hover { background: #1c4482; }
+    .btn-secondary { background: #F1F5F9; color: var(--text-primary); border: 1px solid var(--border-color); }
+    .btn-secondary:hover { background: #E2E8F0; }
+    .btn-danger { background: #C0392B; color: white; }
+    .btn-danger:hover { background: #962d22; }
 
     table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
-    th { text-align: left; padding: 12px 14px; background: #0f172a; color: var(--text-muted); font-weight: 600; border-bottom: 1px solid var(--border-color); }
+    th { text-align: left; padding: 12px 14px; background: #F8FAFC; color: var(--text-secondary); font-weight: 600; border-bottom: 1px solid var(--border-color); }
     td { padding: 12px 14px; border-bottom: 1px solid var(--border-color); }
-    tr:hover { background: rgba(255, 255, 255, 0.02); }
-    pre {
-      background: #090d16;
-      border: 1px solid #1e293b;
-      padding: 12px;
-      border-radius: 6px;
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 0.8rem;
-      color: #38bdf8;
-      overflow-x: auto;
-    }
+    tr:hover { background: #F8FAFC; }
+
     .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
     @media(max-width: 900px) { .two-col { grid-template-columns: 1fr; } }
   </style>
@@ -625,226 +613,257 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     <div class="brand">
       <span style="font-size: 1.4rem;">🛡️</span>
       <div>
-        <h1>SentinelAI</h1>
+        <h1>SentinelAI — Your Security Assistant</h1>
+        <div class="brand-sub">Understand suspicious activity and decide what to do next. (Enterprise Threat Defense SOC)</div>
       </div>
-      <span>v2.5 Enterprise SOC</span>
     </div>
-    <div class="header-status">
-      <div id="defconPill" class="defcon-pill">DEFCON 1 - CRITICAL</div>
-      <button class="btn btn-secondary" onclick="resetDemo()">🔄 Reset Demo Data</button>
+    <div style="display: flex; align-items: center; gap: 12px;">
+      <span id="sensorPill" class="sa-badge sa-badge-warning">Demo Simulation</span>
+      <div id="defconPill" class="sa-badge sa-badge-danger" style="display:none;">DEFCON 1 - CRITICAL</div>
+      <button class="btn btn-secondary" onclick="resetDemo()">🔄 Reset Demo</button>
     </div>
   </header>
 
   <nav class="tabs-bar">
-    <button class="tab-btn active" onclick="switchTab('overview')">📊 SOC Overview</button>
-    <button class="tab-btn" onclick="switchTab('incidents')">🚨 Incident Queue</button>
-    <button class="tab-btn" onclick="switchTab('ml')">🧠 ML Threat Intelligence</button>
-    <button class="tab-btn" onclick="switchTab('copilot')">🤖 AI Threat Copilot</button>
-    <button class="tab-btn" onclick="switchTab('blocks')">🛡️ Active Containment & Expiry</button>
-    <button class="tab-btn" onclick="switchTab('ingestion')">📁 Telemetry Ingestion</button>
-    <button class="tab-btn" onclick="switchTab('live')">📡 Live Monitoring</button>
-    <button class="tab-btn" onclick="switchTab('audit')">📜 Response Audit Trail</button>
+    <button class="tab-btn active" onclick="switchTab('home')">🏠 Home</button>
+    <button class="tab-btn" onclick="switchTab('threats')">⚠️ Threats</button>
+    <button class="tab-btn" onclick="switchTab('protection')">🛡️ Protection</button>
+    <button class="tab-btn" onclick="switchTab('activity')">📋 Activity</button>
+    <button class="tab-btn" onclick="switchTab('advanced')">⚙️ Advanced Tools</button>
   </nav>
 
   <main>
-    <!-- TAB 1: SOC OVERVIEW -->
-    <div id="tab-overview" class="tab-content active">
-      <div class="briefing-banner">
-        <div class="briefing-icon">🤖</div>
-        <div class="briefing-text">
-          <h3>AI Executive Security Briefing</h3>
-          <p id="briefingText">Analyzing real-time threat signals across enterprise telemetry boundaries...</p>
+    <!-- TAB 1: HOME -->
+    <div id="tab-home" class="tab-content active">
+      <div class="banner">
+        <div style="font-size:1.5rem;">💡</div>
+        <div>
+          <strong id="homeBannerTitle">System Status: Monitoring Active</strong>
+          <p id="homeBannerDesc" style="color:var(--text-secondary); font-size:0.9rem; margin-top:4px;">
+            Evaluating network flow observations across enterprise boundaries. All alerts require human verification.
+          </p>
         </div>
       </div>
 
       <div class="metrics-grid">
         <div class="metric-card">
-          <div class="metric-title">Active Security Incidents</div>
-          <div class="metric-val" id="metricIncidents">3 <span class="metric-delta" id="metricCritical">1 Critical</span></div>
+          <div class="metric-title">Threats Needing Review</div>
+          <div class="metric-val" id="metricUnreviewed" style="color:#C0392B;">--</div>
+          <div style="font-size:0.8rem; color:var(--text-secondary); margin-top:4px;">Suspicious items pending triage</div>
         </div>
         <div class="metric-card">
-          <div class="metric-title">Monitored Telemetry Flows</div>
-          <div class="metric-val" id="metricFlows">73</div>
+          <div class="metric-title">Confirmed Incidents</div>
+          <div class="metric-val" id="metricConfirmed" style="color:#2457A7;">--</div>
+          <div style="font-size:0.8rem; color:var(--text-secondary); margin-top:4px;">Verified security events</div>
         </div>
         <div class="metric-card">
-          <div class="metric-title">Total Aggregated Packets</div>
-          <div class="metric-val" id="metricPackets">14,820</div>
+          <div class="metric-title">Protection Actions</div>
+          <div class="metric-val" id="metricBlocks" style="color:#B7791F;">--</div>
+          <div style="font-size:0.8rem; color:var(--text-secondary); margin-top:4px;">Active simulated policies</div>
         </div>
         <div class="metric-card">
-          <div class="metric-title">Enterprise Threat Index</div>
-          <div class="metric-val" id="metricThreatIndex">92 / 100 <span class="metric-delta">Defensive Active</span></div>
+          <div class="metric-title">Protection Mode</div>
+          <div class="metric-val" style="color:#16835D; font-size:1.4rem;">Simulated</div>
+          <div style="font-size:0.8rem; color:var(--text-secondary); margin-top:4px;">Dry-run safety active</div>
         </div>
       </div>
 
-      <div class="two-col">
-        <div class="glass-card">
-          <div class="card-head">
-            <h2>📈 Incident Severity Breakdown</h2>
-          </div>
-          <canvas id="severityChart" height="220"></canvas>
+      <div class="sa-card">
+        <h3 style="margin-bottom:12px;">👉 Recommended Next Step</h3>
+        <div id="recommendedNextStep" style="color:var(--text-secondary); font-size:0.95rem;">
+          Loading recommendations...
         </div>
-        <div class="glass-card">
-          <div class="card-head">
-            <h2>🛡️ Cloud Infrastructure Posture</h2>
-          </div>
-          <ul style="list-style: none; display: flex; flex-direction: column; gap: 12px; font-size: 0.9rem;">
-            <li>🟢 <strong>Detection Engine:</strong> Multi-Event Temporal Correlation (Active)</li>
-            <li>🟢 <strong>Response Mode:</strong> Dry-Run Simulation (Zero Production Impact)</li>
-            <li>🟢 <strong>Deployment Platform:</strong> Vercel Serverless Architecture</li>
-            <li>🟢 <strong>AI Engine:</strong> Google Gemini Copilot (with Deterministic Fallback)</li>
-            <li>🟢 <strong>Database:</strong> SQLite Engine with Neon DB Compatibility</li>
-          </ul>
-        </div>
+      </div>
+
+      <div class="sa-card">
+        <h3 style="margin-bottom:12px;">🕒 Recent Activity</h3>
+        <div id="recentActivityList">Loading recent events...</div>
       </div>
     </div>
 
-    <!-- TAB 2: INCIDENT QUEUE -->
-    <div id="tab-incidents" class="tab-content">
-      <div class="glass-card">
-        <div class="card-head">
-          <h2>🚨 Active Incident Management Queue</h2>
-          <button class="btn btn-secondary" onclick="loadIncidents()">Refresh Queue</button>
-        </div>
-        <div id="incidentsContainer">Loading active incidents...</div>
-      </div>
-    </div>
-
-    <!-- TAB 3: AI COPILOT -->
-    <div id="tab-copilot" class="tab-content">
-      <div class="glass-card">
-        <div class="card-head">
-          <h2>🤖 Google Gemini AI Threat Copilot</h2>
-        </div>
-        <p style="color: var(--text-muted); margin-bottom: 20px;">
-          Deep contextual forensic explanation, technical attack mechanics, and MITRE ATT&CK mapping.
-        </p>
-        <div id="copilotDetails">Select an incident from the Incident Queue to view full AI reasoning.</div>
-      </div>
-    </div>
-
-    <!-- TAB 4: TELEMETRY INGESTION -->
-    <div id="tab-ingestion" class="tab-content">
-      <div class="glass-card">
-        <div class="card-head">
-          <h2>📁 Structured Log Ingestion & Detection Pipeline</h2>
-        </div>
-        <p style="color: var(--text-muted); margin-bottom: 20px;">
-          Select a pre-configured laboratory telemetry file to execute the SentinelAI detection and multi-event correlation engine.
-        </p>
-        <div style="display: flex; gap: 12px; align-items: center; margin-bottom: 20px;">
-          <select id="sampleSelect" style="background:#1e293b; color:white; border:1px solid #334155; padding:10px 14px; border-radius:8px; font-size:0.9rem; flex:1;">
-            <option value="suricata_73">Suricata EVE 73-Record Security Audit Stream (sentinelai_suricata_eve_sample.json)</option>
-            <option value="port_scan">Simulated Port Scan Attack (attack_port_scan.json)</option>
-            <option value="brute_force">Simulated Brute Force Attack (attack_brute_force.json)</option>
-            <option value="ddos_flood">Simulated DDoS Surge (attack_ddos_flood.json)</option>
-          </select>
-          <button class="btn" onclick="runIngestion()">Run Detection & Correlation</button>
-        </div>
-        <div id="ingestionResults"></div>
-      </div>
-    </div>
-
-    <!-- TAB 5: LIVE MONITORING -->
-    <div id="tab-live" class="tab-content">
-      <div class="glass-card">
-        <div class="card-head">
-          <h2>📡 Live Telemetry Stream Simulator</h2>
+    <!-- TAB 2: THREATS -->
+    <div id="tab-threats" class="tab-content">
+      <div class="sa-card">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
           <div>
+            <h2>⚠️ Suspicious Activity & Threats</h2>
+            <p style="color:var(--text-secondary); font-size:0.88rem;">Review detected events and understand what happened in plain English.</p>
+          </div>
+          <button class="btn btn-secondary" onclick="loadIncidents()">Refresh List</button>
+        </div>
+        <div id="incidentsContainer">Loading incidents...</div>
+      </div>
+
+      <!-- Threat Drill-Down Detail Box -->
+      <div id="threatDetailCard" class="sa-card" style="display:none;">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:14px;">
+          <div>
+            <h3 id="tdTitle" style="color:var(--accent-primary);">Threat Details</h3>
+            <span id="tdSubtitle" style="color:var(--text-secondary); font-size:0.88rem;"></span>
+          </div>
+          <button class="btn btn-secondary" style="padding:4px 10px; font-size:0.8rem;" onclick="closeThreatDetails()">Close</button>
+        </div>
+
+        <div class="two-col" style="margin-bottom:20px;">
+          <div>
+            <h4>1. What happened?</h4>
+            <p id="tdWhatHappened" style="color:var(--text-secondary); font-size:0.9rem; margin:6px 0 14px 0;"></p>
+            <h4>2. Why might it matter?</h4>
+            <p id="tdWhyMatters" style="color:var(--text-secondary); font-size:0.9rem; margin:6px 0 14px 0;"></p>
+            <h4>3. What evidence supports this assessment?</h4>
+            <ul id="tdEvidenceList" style="padding-left:20px; color:var(--text-secondary); font-size:0.88rem; line-height:1.6;"></ul>
+          </div>
+          <div>
+            <h4>4. What remains uncertain?</h4>
+            <ul id="tdUncertainList" style="padding-left:20px; color:var(--text-secondary); font-size:0.88rem; line-height:1.6; margin-bottom:14px;"></ul>
+            <h4>5. What should I do next?</h4>
+            <ul id="tdNextStepsList" style="padding-left:20px; color:var(--text-secondary); font-size:0.88rem; line-height:1.6;"></ul>
+          </div>
+        </div>
+
+        <div style="background:#F8FAFC; border:1px solid var(--border-color); border-radius:6px; padding:14px; margin-bottom:14px;">
+          <strong>Submit Review Verdict:</strong>
+          <div style="display:flex; gap:8px; margin-top:8px;">
+            <button class="btn btn-danger" onclick="submitDetailVerdict('True Positive')">✅ Confirm Threat</button>
+            <button class="btn btn-secondary" onclick="submitDetailVerdict('False Positive')">❌ False Alarm</button>
+            <button class="btn btn-secondary" onclick="submitDetailVerdict('Benign')">🛡️ Benign / Safe</button>
+          </div>
+        </div>
+
+        <details>
+          <summary style="cursor:pointer; font-weight:600; color:var(--accent-primary); font-size:0.88rem;">🔬 View Technical Details (Rules, Ports, ML Anomaly Scores)</summary>
+          <div id="tdTechnicalJson" style="background:#090d16; color:#38bdf8; padding:12px; border-radius:6px; margin-top:8px; font-family:'JetBrains Mono',monospace; font-size:0.8rem; overflow-x:auto;"></div>
+        </details>
+      </div>
+    </div>
+
+    <!-- TAB 3: PROTECTION -->
+    <div id="tab-protection" class="tab-content">
+      <div class="sa-card" style="border-left:4px solid var(--status-success);">
+        <h3 style="color:var(--status-success); margin-bottom:4px;">Protection Mode: Simulated Quarantine (Safe)</h3>
+        <p style="color:var(--text-secondary); font-size:0.9rem;">
+          Live firewall enforcement is not implemented; simulation only. Defensive rules are calculated and validated, but no changes are made to your operating system.
+        </p>
+      </div>
+
+      <div class="sa-card">
+        <h3 style="margin-bottom:12px;">📋 Active Containment Policies</h3>
+        <div id="activeBlocksContainer">Loading active containment rules...</div>
+      </div>
+
+      <div class="sa-card">
+        <h3 style="margin-bottom:8px;">🔒 Protected Allowlist</h3>
+        <p style="color:var(--text-secondary); font-size:0.85rem; margin-bottom:8px;">
+          These network routing endpoints are permanently protected from automated or accidental blocking:
+        </p>
+        <code style="background:#F1F5F9; padding:8px 12px; border-radius:6px; display:block; color:#172B4D; font-size:0.85rem;">
+          127.0.0.1, ::1, 192.168.1.1, 10.0.0.1, 172.16.0.1, 1.1.1.1, 8.8.8.8, 8.8.4.4, 9.9.9.9
+        </code>
+      </div>
+    </div>
+
+    <!-- TAB 4: ACTIVITY -->
+    <div id="tab-activity" class="tab-content">
+      <div class="sa-card">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+          <div>
+            <h2>📋 Activity & Audit History</h2>
+            <p style="color:var(--text-secondary); font-size:0.88rem;">Chronological timeline of system events, reviews, and simulated containment actions.</p>
+          </div>
+          <button class="btn btn-secondary" onclick="loadActivityTimeline()">Refresh Activity</button>
+        </div>
+        <div id="activityTableContainer">Loading activity logs...</div>
+      </div>
+    </div>
+
+    <!-- TAB 5: ADVANCED TOOLS -->
+    <div id="tab-advanced" class="tab-content">
+      <div class="sa-card">
+        <h2>⚙️ Advanced Tools & Deep Forensics</h2>
+        <p style="color:var(--text-secondary); font-size:0.88rem; margin-bottom:20px;">
+          Access machine learning retraining, Google Gemini threat reasoning, telemetry ingestion, and raw audit logs.
+        </p>
+
+        <div style="display:flex; gap:8px; border-bottom:1px solid var(--border-color); padding-bottom:12px; margin-bottom:16px;">
+          <button class="btn btn-secondary" onclick="showAdvSection('ml')">🧠 ML Intelligence</button>
+          <button class="btn btn-secondary" onclick="showAdvSection('copilot')">🤖 AI Copilot</button>
+          <button class="btn btn-secondary" onclick="showAdvSection('ingest')">📁 Log Ingestion</button>
+          <button class="btn btn-secondary" onclick="showAdvSection('live')">📡 Live Simulator</button>
+        </div>
+
+        <!-- ADV: ML -->
+        <div id="adv-ml">
+          <div class="banner">
+            <div>
+              <strong>Notice: Isolation Forest Benchmarked on Synthetic Fixtures</strong>
+              <p style="color:var(--text-secondary); font-size:0.85rem;">
+                Statistical anomaly scores reflect baseline deviation. Performance metrics are evaluated against synthetic lab fixtures, not real-world network traffic.
+              </p>
+            </div>
+          </div>
+          <div class="two-col">
+            <div id="mlMetricsContainer" style="background:#F8FAFC; border:1px solid var(--border-color); border-radius:6px; padding:16px;">Loading ML metrics...</div>
+            <div style="background:#F8FAFC; border:1px solid var(--border-color); border-radius:6px; padding:16px;">
+              <h4>Controlled Retraining Console</h4>
+              <p style="color:var(--text-secondary); font-size:0.85rem; margin:6px 0 12px 0;">Enforces validation gates and holdout test evaluation.</p>
+              <button class="btn" onclick="retrainModel()">🚀 Run Controlled Retraining</button>
+              <div id="retrainResult" style="margin-top:8px; font-size:0.85rem;"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ADV: COPILOT -->
+        <div id="adv-copilot" style="display:none;">
+          <div class="banner">
+            <div>
+              <strong>🛡️ AI Safety Policy</strong>
+              <p style="color:var(--text-secondary); font-size:0.85rem;">AI suggestions are advisory hypotheses for analyst consideration. The AI cannot classify an IP as malicious or trigger firewall containment.</p>
+            </div>
+          </div>
+          <div id="copilotDetails" style="background:#F8FAFC; border:1px solid var(--border-color); border-radius:6px; padding:16px;">Select an incident in the Threats tab to view forensic reasoning.</div>
+        </div>
+
+        <!-- ADV: INGEST -->
+        <div id="adv-ingest" style="display:none;">
+          <div style="display:flex; gap:12px; align-items:center; margin-bottom:16px;">
+            <select id="sampleSelect" style="padding:8px 12px; border-radius:6px; border:1px solid var(--border-color); flex:1;">
+              <option value="suricata_73">Suricata EVE 73-Record Security Stream (sentinelai_suricata_eve_sample.json)</option>
+              <option value="port_scan">Simulated Port Scan Attack (attack_port_scan.json)</option>
+              <option value="brute_force">Simulated Brute Force Attack (attack_brute_force.json)</option>
+              <option value="ddos_flood">Simulated DDoS Surge (attack_ddos_flood.json)</option>
+            </select>
+            <button class="btn" onclick="runIngestion()">Run Detection & Correlation</button>
+          </div>
+          <div id="ingestionResults"></div>
+        </div>
+
+        <!-- ADV: LIVE -->
+        <div id="adv-live" style="display:none;">
+          <div style="margin-bottom:14px;">
             <button class="btn" onclick="fetchLiveStream()">⚡ Trigger Stream Batch</button>
           </div>
-        </div>
-        <p style="color: var(--text-muted); margin-bottom: 16px;">
-          Generates real-time multi-protocol network flows explicitly tagged <code>[SIMULATED: Lab Scenario]</code>.
-        </p>
-        <div id="liveStreamTable">Click "Trigger Stream Batch" to simulate network flows.</div>
-      </div>
-    </div>
-
-    <!-- TAB: ML THREAT INTELLIGENCE -->
-    <div id="tab-ml" class="tab-content">
-      <div class="two-col">
-        <div class="glass-card">
-          <div class="card-head">
-            <h2>🧠 Active Model Performance & Metrics</h2>
-            <button class="btn btn-secondary" onclick="loadMLStatus()">Refresh ML Status</button>
-          </div>
-          <div id="mlMetricsContainer">Loading active model performance...</div>
-        </div>
-        <div class="glass-card">
-          <div class="card-head">
-            <h2>🧪 Controlled Retraining Console</h2>
-          </div>
-          <p style="color: var(--text-muted); margin-bottom: 14px; font-size: 0.85rem;">
-            Executes controlled retraining with validation gates, holdout evaluation, and version registry persistence.
+          <p style="color:var(--text-secondary); font-size:0.85rem; margin-bottom:12px;">
+            Generates simulated network flows explicitly tagged <code>[SIMULATED: Lab Scenario]</code>.
           </p>
-          <div style="display:flex; flex-direction:column; gap:12px;">
-            <div>
-              <label style="font-size:0.8rem; color:#94a3b8;">Synthetic Fixture Sample Count:</label>
-              <input type="number" id="retrainSamples" value="300" min="100" max="1000" style="background:#1e293b; color:white; border:1px solid #334155; padding:8px 12px; border-radius:6px; width:100%;">
-            </div>
-            <div>
-              <label style="font-size:0.8rem; color:#94a3b8;">Contamination Parameter:</label>
-              <input type="number" id="retrainContam" value="0.15" step="0.01" min="0.05" max="0.30" style="background:#1e293b; color:white; border:1px solid #334155; padding:8px 12px; border-radius:6px; width:100%;">
-            </div>
-            <button class="btn" onclick="retrainModel()">🚀 Run Controlled Retraining</button>
-            <div id="retrainResult" style="font-size:0.85rem; margin-top:8px;"></div>
-          </div>
+          <div id="liveStreamTable">Click "Trigger Stream Batch" to simulate flows.</div>
         </div>
-      </div>
-      <div class="glass-card">
-        <div class="card-head">
-          <h2>⚡ Real-Time ML Anomaly Scorer</h2>
-        </div>
-        <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:12px; margin-bottom:12px;">
-          <div><label style="font-size:0.75rem; color:#94a3b8;">Packets</label><input type="number" id="evalPackets" value="120" style="background:#1e293b; color:white; border:1px solid #334155; padding:8px; border-radius:6px; width:100%;"></div>
-          <div><label style="font-size:0.75rem; color:#94a3b8;">Port</label><input type="number" id="evalPort" value="443" style="background:#1e293b; color:white; border:1px solid #334155; padding:8px; border-radius:6px; width:100%;"></div>
-          <div><label style="font-size:0.75rem; color:#94a3b8;">Source IP</label><input type="text" id="evalSrc" value="192.168.1.55" style="background:#1e293b; color:white; border:1px solid #334155; padding:8px; border-radius:6px; width:100%;"></div>
-        </div>
-        <button class="btn btn-secondary" onclick="evaluateSingleFlow()">Score Telemetry Flow</button>
-        <div id="flowScoreResult" style="margin-top:12px; font-size:0.9rem;"></div>
-      </div>
-    </div>
-
-    <!-- TAB: ACTIVE BLOCKS & EXPIRY -->
-    <div id="tab-blocks" class="tab-content">
-      <div class="glass-card">
-        <div class="card-head">
-          <h2>🛡️ Active Containment Rules & Expiry Watchdog</h2>
-          <button class="btn btn-secondary" onclick="loadActiveBlocks()">Check Expiry & Refresh</button>
-        </div>
-        <p style="color: var(--text-muted); margin-bottom: 16px; font-size: 0.85rem;">
-          Temporary containment policies expire automatically. Administrator approvals and rollbacks are logged to the audit ledger.
-        </p>
-        <div id="activeBlocksContainer">Loading active blocks...</div>
-      </div>
-      <div class="glass-card">
-        <div class="card-head">
-          <h2>🔒 Protected Core Infrastructure Allowlist</h2>
-        </div>
-        <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 8px;">
-          The following indicators are permanently protected from automated or accidental firewall blocking:
-        </p>
-        <code style="background:#0f172a; padding:8px 12px; border-radius:6px; display:block; color:#38bdf8;">127.0.0.1, ::1, 0.0.0.0, 192.168.1.1, 10.0.0.1, 172.16.0.1, 1.1.1.1, 8.8.8.8, 8.8.4.4, 9.9.9.9</code>
-      </div>
-    </div>
-
-    <!-- TAB 6: AUDIT TRAIL -->
-    <div id="tab-audit" class="tab-content">
-      <div class="glass-card">
-        <div class="card-head">
-          <h2>📜 SOC Defensive Response & Audit Trail</h2>
-          <button class="btn btn-secondary" onclick="loadAuditTrail()">Refresh Audit Log</button>
-        </div>
-        <p style="color: var(--text-muted); margin-bottom: 16px;">
-          Immutable SQLite audit log recording every containment policy simulation, rollback command, and analyst action.
-        </p>
-        <div id="auditTable">Loading audit logs...</div>
       </div>
     </div>
   </main>
 
   <script>
-    let severityChartInstance = null;
+    let activeDetailIncident = null;
+
+    // Strict XSS Sanitization Helper
+    function escapeHTML(str) {
+      if (str === null || str === undefined) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
 
     function switchTab(tabId) {
       document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
@@ -854,11 +873,18 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       const targetTab = document.getElementById('tab-' + tabId);
       if (targetTab) targetTab.classList.add('active');
 
-      if (tabId === 'incidents') loadIncidents();
-      if (tabId === 'audit') loadAuditTrail();
-      if (tabId === 'overview') loadStatus();
-      if (tabId === 'ml') loadMLStatus();
-      if (tabId === 'blocks') loadActiveBlocks();
+      if (tabId === 'home') loadStatus();
+      if (tabId === 'threats') loadIncidents();
+      if (tabId === 'protection') loadActiveBlocks();
+      if (tabId === 'activity') loadActivityTimeline();
+      if (tabId === 'advanced') { showAdvSection('ml'); loadMLStatus(); }
+    }
+
+    function showAdvSection(sec) {
+      ['ml', 'copilot', 'ingest', 'live'].forEach(s => {
+        const el = document.getElementById('adv-' + s);
+        if (el) el.style.display = (s === sec) ? 'block' : 'none';
+      });
     }
 
     async function loadStatus() {
@@ -866,44 +892,39 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         const res = await fetch('/api/status');
         const data = await res.json();
 
-        document.getElementById('briefingText').innerText = data.ai_executive_summary || 'All monitored network perimeter nodes operating within normal baselines.';
-        document.getElementById('metricIncidents').innerHTML = `${data.active_incidents} <span class="metric-delta">${data.critical_count} Critical</span>`;
-        document.getElementById('metricFlows').innerText = data.telemetry_flows;
-        document.getElementById('metricPackets').innerText = data.total_packets.toLocaleString();
-        document.getElementById('metricThreatIndex').innerHTML = `${data.threat_index} / 100 <span class="metric-delta">${data.threat_index > 50 ? 'Defensive Active' : 'Quiescent'}</span>`;
+        document.getElementById('metricUnreviewed').innerText = data.unreviewed_count ?? data.active_incidents;
+        document.getElementById('metricConfirmed').innerText = data.confirmed_count ?? 0;
+        document.getElementById('metricBlocks').innerText = data.active_block_count ?? 0;
 
-        const pill = document.getElementById('defconPill');
-        pill.innerText = data.defcon_label;
-        pill.style.backgroundColor = data.defcon_level === 1 ? '#ef4444' : (data.defcon_level === 2 ? '#f97316' : '#10b981');
+        const pill = document.getElementById('sensorPill');
+        pill.innerText = data.active_incidents > 0 ? "Demo Simulation" : "Idle";
 
-        renderSeverityChart(data.critical_count, data.high_count, data.active_incidents);
-      } catch (e) {
-        console.error('Failed to load status:', e);
-      }
-    }
-
-    function renderSeverityChart(critical, high, total) {
-      const ctx = document.getElementById('severityChart');
-      if (!ctx) return;
-      if (severityChartInstance) severityChartInstance.destroy();
-
-      const medium = Math.max(0, total - (critical + high));
-      severityChartInstance = new Chart(ctx, {
-        type: 'doughnut',
-        data: {
-          labels: ['Critical', 'High', 'Medium'],
-          datasets: [{
-            data: [critical || 1, high || 2, medium || 0],
-            backgroundColor: ['#ef4444', '#f97316', '#eab308'],
-            borderWidth: 0
-          }]
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: { legend: { position: 'bottom', labels: { color: '#94a3b8' } } }
+        const recBox = document.getElementById('recommendedNextStep');
+        if (data.unreviewed_count > 0) {
+          recBox.innerHTML = `<strong>Action Needed:</strong> You have ${data.unreviewed_count} suspicious event(s) awaiting review. Open the <strong>Threats</strong> tab to review.`;
+        } else {
+          recBox.innerHTML = `<strong>All Clear:</strong> All recorded network events are verified and accounted for.`;
         }
-      });
+
+        // Load 3 recent logs
+        const auditRes = await fetch('/api/audit');
+        const auditLogs = await auditRes.json();
+        const recList = document.getElementById('recentActivityList');
+        if (auditLogs && auditLogs.length > 0) {
+          let html = '';
+          auditLogs.slice(0, 4).forEach(a => {
+            html += `<div style="padding:8px 0; border-bottom:1px solid var(--border-color); display:flex; justify-content:space-between;">
+              <div><strong>${escapeHTML(a.action_type.replace(/_/g, ' '))}</strong> <small style="color:var(--text-secondary);">${escapeHTML(a.target_ip)}</small></div>
+              <small style="color:var(--text-secondary);">${escapeHTML(a.timestamp)}</small>
+            </div>`;
+          });
+          recList.innerHTML = html;
+        } else {
+          recList.innerHTML = '<p style="color:var(--text-secondary);">No recent activity recorded.</p>';
+        }
+      } catch (e) {
+        console.error('Error loading status:', e);
+      }
     }
 
     async function loadIncidents() {
@@ -912,225 +933,112 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         const res = await fetch('/api/incidents');
         const list = await res.json();
         if (!list || list.length === 0) {
-          container.innerHTML = '<p>No active incidents.</p>';
+          container.innerHTML = '<p style="color:var(--text-secondary);">No security incidents detected.</p>';
           return;
         }
 
-        let html = '<table><thead><tr><th>ID</th><th>Severity</th><th>Category</th><th>Source Attacker</th><th>Target</th><th>ML Anomaly</th><th>Recur</th><th>Analyst Verdict</th><th>Action</th></tr></thead><tbody>';
-        list.forEach(i => {
-          const sevClass = 'badge-' + (i.severity || 'low').toLowerCase();
-          const mlScoreDisplay = i.ml_is_anomaly
-            ? `<span style="color:#f87171; font-weight:700;">⚠️ Yes (${i.ml_anomaly_score !== null && i.ml_anomaly_score !== undefined ? Number(i.ml_anomaly_score).toFixed(2) : 'N/A'})</span>`
-            : `<span style="color:#10b981;">Normal</span>`;
-          const recurCount = i.recurrence_count ? `${i.recurrence_count}x` : '1x';
+        window._incidentCache = list;
+
+        let html = '<table><thead><tr><th>Priority</th><th>Observed Activity</th><th>Source Host</th><th>Review Status</th><th>When</th><th>Action</th></tr></thead><tbody>';
+        list.forEach((i, idx) => {
+          const sevClass = (i.severity === 'Critical' || i.severity === 'High') ? 'sa-badge-danger' : 'sa-badge-warning';
+          const plainTitle = getPlainTitle(i.category);
           html += `<tr>
-            <td><strong>${i.incident_id}</strong></td>
-            <td><span class="badge ${sevClass}">${i.severity}</span></td>
-            <td><strong>${i.category}</strong></td>
-            <td><code>${i.source_ip}</code></td>
-            <td><code>${i.destination_ip || 'Internal'}</code></td>
-            <td>${mlScoreDisplay}</td>
-            <td><code>${recurCount}</code></td>
+            <td><span class="sa-badge ${sevClass}">${escapeHTML(i.severity)}</span></td>
+            <td><strong>${escapeHTML(plainTitle)}</strong></td>
+            <td><code>${escapeHTML(i.source_ip)}</code></td>
+            <td><span class="sa-badge sa-badge-neutral">${escapeHTML(i.analyst_verdict || 'Needs Review')}</span></td>
+            <td><small style="color:var(--text-secondary);">${escapeHTML(i.timestamp)}</small></td>
             <td>
-              <div style="display:flex; flex-direction:column; gap:4px;">
-                <select id="verdict-${i.incident_id}" style="background:#1e293b; color:white; border:1px solid #334155; padding:4px 6px; border-radius:4px; font-size:0.75rem;">
-                  <option value="Unresolved" ${i.analyst_verdict === 'Unresolved' ? 'selected' : ''}>Unresolved</option>
-                  <option value="True Positive" ${i.analyst_verdict === 'True Positive' ? 'selected' : ''}>True Positive</option>
-                  <option value="False Positive" ${i.analyst_verdict === 'False Positive' ? 'selected' : ''}>False Positive</option>
-                  <option value="Benign" ${i.analyst_verdict === 'Benign' ? 'selected' : ''}>Benign</option>
-                </select>
-                <button class="btn btn-secondary" style="padding:2px 6px; font-size:0.7rem;" onclick="submitVerdict('${i.incident_id}')">Save Verdict</button>
-              </div>
-            </td>
-            <td>
-              <button class="btn btn-danger" style="padding:6px 10px; font-size:0.75rem;" onclick="simulateContain('${i.incident_id}', '${i.source_ip}')">🛡️ Contain (Dry-Run)</button>
-              <button class="btn btn-secondary" style="padding:6px 10px; font-size:0.75rem; margin-top:4px;" onclick="viewGroundedCopilot('${i.incident_id}')">🤖 AI Triage</button>
+              <button class="btn btn-secondary" style="padding:4px 10px; font-size:0.8rem;" onclick="viewThreatDetail(${idx})">Inspect</button>
             </td>
           </tr>`;
         });
         html += '</tbody></table>';
         container.innerHTML = html;
       } catch (e) {
-        container.innerHTML = `<p style="color:red;">Failed to load incidents: ${e}</p>`;
+        container.innerHTML = `<p style="color:red;">Error loading incidents: ${escapeHTML(e)}</p>`;
       }
     }
 
-    async function submitVerdict(id) {
-      const select = document.getElementById(`verdict-${id}`);
-      if (!select) return;
-      const verdict = select.value;
+    function getPlainTitle(category) {
+      const titles = {
+        "Port Scan": "Network Port Scanning",
+        "Brute Force": "Repeated Login Attempts",
+        "Traffic Burst": "Rapid Web Request Surge",
+        "DDoS Surge": "High-Volume Traffic Surge",
+        "Volumetric DDoS": "High-Volume Traffic Surge",
+        "Data Exfiltration": "Unusual Outbound Data Transfer",
+        "Suspicious Reconnaissance": "Network Reconnaissance Activity"
+      };
+      return titles[category] || category;
+    }
+
+    function viewThreatDetail(idx) {
+      const inc = window._incidentCache[idx];
+      if (!inc) return;
+      activeDetailIncident = inc;
+
+      document.getElementById('threatDetailCard').style.display = 'block';
+      document.getElementById('tdTitle').innerText = `${getPlainTitle(inc.category)} (${inc.incident_id})`;
+      document.getElementById('tdSubtitle').innerText = `Source device: ${inc.source_ip} | Targeted system: ${inc.destination_ip || 'Internal'}`;
+
+      // 5 Questions breakdown
+      document.getElementById('tdWhatHappened').innerText = `Device ${inc.source_ip} transmitted ${inc.total_packets || 0} packets directed at port(s) ${JSON.stringify(inc.destination_ports || [])}.`;
+      document.getElementById('tdWhyMatters').innerText = `Unusual activity like ${getPlainTitle(inc.category)} can indicate automated scanning, unauthorized connection attempts, or misconfigured scripts.`;
+      
+      const evList = document.getElementById('tdEvidenceList');
+      evList.innerHTML = `<li>Sensor observed note: ${escapeHTML(inc.evidence || 'Pattern detected')}</li>
+                          <li>Observed recurrence: ${escapeHTML(String(inc.recurrence_count || 1))} time(s) across incident memory</li>`;
+
+      const ucList = document.getElementById('tdUncertainList');
+      ucList.innerHTML = `<li>An IP address is a routing endpoint; it does not prove human identity.</li>
+                          <li>Legitimate actions (like network backups or mistyped credentials) can produce similar patterns.</li>
+                          <li>ML anomaly scores reflect statistical deviation, not proof of attack.</li>`;
+
+      const stList = document.getElementById('tdNextStepsList');
+      stList.innerHTML = `<li>Verify whether ${escapeHTML(inc.source_ip)} is an authorized computer or known employee.</li>
+                          <li>Stage a safe simulated block in the Protection tab if unrecognized.</li>
+                          <li>Submit a review verdict below to confirm or dismiss this alert.</li>`;
+
+      document.getElementById('tdTechnicalJson').innerText = JSON.stringify({
+        incident_id: inc.incident_id,
+        rule_id: inc.rule_id,
+        mitre_id: inc.mitre_id,
+        model_version: inc.model_version,
+        ml_anomaly_score: inc.ml_anomaly_score,
+        confidence: inc.confidence,
+        raw_evidence: inc.raw_evidence
+      }, null, 2);
+
+      // Scroll to detail box
+      document.getElementById('threatDetailCard').scrollIntoView({ behavior: 'smooth' });
+    }
+
+    function closeThreatDetails() {
+      document.getElementById('threatDetailCard').style.display = 'none';
+      activeDetailIncident = null;
+    }
+
+    async function submitDetailVerdict(verdict) {
+      if (!activeDetailIncident) return;
       try {
-        const res = await fetch(`/api/incidents/${id}/verdict`, {
+        const res = await fetch(`/api/incidents/${activeDetailIncident.incident_id}/verdict`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             verdict: verdict,
-            analyst_user: 'SOC Analyst (Web UI)',
-            reason: `Analyst classified incident as ${verdict}`
+            analyst_user: 'Security Assistant User',
+            reason: `User classified incident as ${verdict}`
           })
         });
         const data = await res.json();
-        alert(`Analyst verdict saved for ${id}: ${data.verdict}`);
+        alert(`Recorded verdict for ${activeDetailIncident.incident_id}: ${data.verdict}`);
+        closeThreatDetails();
         loadIncidents();
+        loadStatus();
       } catch (e) {
-        alert(`Failed to save verdict: ${e}`);
-      }
-    }
-
-    async function simulateContain(id, ip) {
-      try {
-        const res = await fetch('/api/contain', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ incident_id: id, target_ip: ip })
-        });
-        const data = await res.json();
-        alert(`Containment Simulation for Incident ${id}:\\n\\n` +
-              `Status: ${data.result.result}\\n` +
-              `Target IP: ${data.result.target_ip}\\n` +
-              `PowerShell: ${data.commands['Windows PowerShell']}\\n` +
-              `iptables: ${data.commands['Linux iptables']}\\n\\n` +
-              `Logged to immutable SQLite audit trail.`);
-        loadAuditTrail();
-      } catch (e) {
-        alert('Containment failed: ' + e);
-      }
-    }
-
-    async function viewGroundedCopilot(id) {
-      switchTab('copilot');
-      const box = document.getElementById('copilotDetails');
-      box.innerHTML = `<p>Grounding Google Gemini threat investigation in stored evidence for incident <strong>${id}</strong>...</p>`;
-      try {
-        const res = await fetch(`/api/incidents/${id}/explain`);
-        const exp = await res.json();
-        box.innerHTML = `
-          <div style="background:#0f172a; padding:18px; border-radius:8px; border:1px solid #1e293b; margin-bottom:16px;">
-            <div style="background:rgba(239, 68, 68, 0.1); border-left:4px solid #ef4444; padding:8px 12px; margin-bottom:12px; font-size:0.8rem; color:#fca5a5;">
-              <strong>🛡️ AI Safety Boundary:</strong> ${exp.ai_safety_notice || 'AI Guidance Notice: This assessment is advisory only. Autonomous firewall modification is strictly prohibited.'}
-            </div>
-            <h3 style="color:#60a5fa; margin-bottom:8px;">${exp.activity || 'Incident Analysis'} (Target Host: ${exp.source_ip || id})</h3>
-            <p style="margin-bottom:12px;"><strong>Executive Summary:</strong> ${exp.summary}</p>
-            <p style="margin-bottom:12px;"><strong>Technical Mechanism:</strong> ${exp.mechanism}</p>
-            <p style="margin-bottom:12px;"><strong>Potential Impact:</strong> ${exp.potential_impact}</p>
-            <p style="margin-bottom:12px;"><strong>MITRE ATT&CK:</strong> <code>${exp.mitre_technique}</code></p>
-            
-            <h4 style="color:#38bdf8; margin:16px 0 6px 0;">🔍 Observed Telemetry Facts</h4>
-            <ul style="padding-left:20px; line-height:1.6; font-size:0.85rem; color:#cbd5e1;">
-              ${(exp.observed_facts || []).map(f => `<li>${f}</li>`).join('')}
-            </ul>
-
-            <h4 style="color:#a855f7; margin:16px 0 6px 0;">🧠 ML Model Predictions</h4>
-            <ul style="padding-left:20px; line-height:1.6; font-size:0.85rem; color:#cbd5e1;">
-              ${(exp.model_predictions || []).map(p => `<li>${p}</li>`).join('')}
-            </ul>
-
-            <h4 style="color:#f59e0b; margin:16px 0 6px 0;">💡 Threat Hypotheses & Investigation Steps</h4>
-            <ul style="padding-left:20px; line-height:1.6; font-size:0.85rem; color:#cbd5e1;">
-              ${(exp.investigation_steps || []).map(s => `<li>${s}</li>`).join('')}
-            </ul>
-          </div>
-        `;
-      } catch (e) {
-        box.innerHTML = `<p style="color:red;">Error loading grounded investigation: ${e}</p>`;
-      }
-    }
-
-    async function loadMLStatus() {
-      const container = document.getElementById('mlMetricsContainer');
-      try {
-        const res = await fetch('/api/ml/status');
-        const data = await res.json();
-        const metrics = data.metrics || {};
-        container.innerHTML = `
-          <div style="display:flex; flex-direction:column; gap:10px; font-size:0.9rem;">
-            <div style="background:#090d16; padding:12px; border-radius:6px; border:1px solid #1e293b;">
-              <div><strong>Active Model Version:</strong> <span style="color:#38bdf8;">${data.active_model_version || 'None'}</span></div>
-              <div><strong>Model Status:</strong> ${data.is_fitted ? '🟢 Active & Fitted' : '🔴 Unfitted'}</div>
-              <div><strong>Model Algorithm:</strong> Isolation Forest (scikit-learn)</div>
-            </div>
-            <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:8px;">
-              <div style="background:#090d16; padding:10px; border-radius:6px; text-align:center;">
-                <div style="color:#94a3b8; font-size:0.75rem;">TEST ACCURACY</div>
-                <div style="font-size:1.2rem; font-weight:700; color:#10b981;">${metrics.accuracy ? Math.round(metrics.accuracy * 100) + '%' : 'N/A'}</div>
-              </div>
-              <div style="background:#090d16; padding:10px; border-radius:6px; text-align:center;">
-                <div style="color:#94a3b8; font-size:0.75rem;">ROC-AUC</div>
-                <div style="font-size:1.2rem; font-weight:700; color:#60a5fa;">${metrics.roc_auc ? metrics.roc_auc.toFixed(3) : 'N/A'}</div>
-              </div>
-              <div style="background:#090d16; padding:10px; border-radius:6px; text-align:center;">
-                <div style="color:#94a3b8; font-size:0.75rem;">PR-AUC</div>
-                <div style="font-size:1.2rem; font-weight:700; color:#a855f7;">${metrics.pr_auc ? metrics.pr_auc.toFixed(3) : 'N/A'}</div>
-              </div>
-            </div>
-            <div style="font-size:0.8rem; color:#94a3b8; line-height:1.4;">
-              <strong>Sample Volume:</strong> ${metrics.train_samples || 0} training / ${metrics.test_samples || 0} test held-out flows.
-            </div>
-            <div style="background:rgba(234, 179, 8, 0.1); border-left:3px solid #eab308; padding:8px 10px; font-size:0.75rem; color:#fde047;">
-              <strong>Standard ML Notice:</strong> ${data.disclaimer || 'Anomaly scores measure statistical deviation and are NOT proof of an attack.'}
-            </div>
-          </div>
-        `;
-      } catch (e) {
-        container.innerHTML = `<p style="color:red;">Failed to load ML status: ${e}</p>`;
-      }
-    }
-
-    async function retrainModel() {
-      const resultBox = document.getElementById('retrainResult');
-      const samples = parseInt(document.getElementById('retrainSamples').value) || 300;
-      const contam = parseFloat(document.getElementById('retrainContam').value) || 0.15;
-      resultBox.innerHTML = 'Executing controlled retraining pipeline...';
-      try {
-        const res = await fetch('/api/ml/retrain', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ synthetic_samples: samples, contamination: contam })
-        });
-        const data = await res.json();
-        if (data.status === 'success') {
-          resultBox.innerHTML = `<span style="color:#10b981;">✅ Trained <strong>${data.new_model_version}</strong>. Accuracy: ${Math.round(data.metrics.accuracy * 100)}%, ROC-AUC: ${data.metrics.roc_auc.toFixed(3)}</span>`;
-          loadMLStatus();
-        } else {
-          resultBox.innerHTML = `<span style="color:#ef4444;">❌ Retraining failed: ${data.detail || JSON.stringify(data)}</span>`;
-        }
-      } catch (e) {
-        resultBox.innerHTML = `<span style="color:#ef4444;">Retrain error: ${e}</span>`;
-      }
-    }
-
-    async function evaluateSingleFlow() {
-      const box = document.getElementById('flowScoreResult');
-      const packets = parseInt(document.getElementById('evalPackets').value) || 1;
-      const port = parseInt(document.getElementById('evalPort').value) || 80;
-      const src = document.getElementById('evalSrc').value || '192.168.1.100';
-      box.innerHTML = 'Evaluating flow against Isolation Forest...';
-      try {
-        const res = await fetch('/api/ml/predict', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ packets: packets, port: port, source_ip: src })
-        });
-        const data = await res.json();
-        const isAnomaly = data.is_anomaly;
-        const color = isAnomaly ? '#ef4444' : '#10b981';
-        box.innerHTML = `
-          <div style="background:#090d16; padding:12px; border-radius:6px; border:1px solid ${color};">
-            <div style="font-weight:700; color:${color}; font-size:1rem; margin-bottom:4px;">
-              ${isAnomaly ? '⚠️ ML ANOMALY DETECTED' : '✅ STATISTICALLY NORMAL FLOW'}
-            </div>
-            <div style="font-size:0.85rem; color:#cbd5e1;">
-              <strong>Raw Anomaly Score:</strong> ${data.raw_score.toFixed(4)} | 
-              <strong>Confidence:</strong> ${(data.confidence * 100).toFixed(1)}% | 
-              <strong>Evaluated By:</strong> <code>${data.model_version}</code>
-            </div>
-            <div style="font-size:0.75rem; color:#94a3b8; margin-top:6px;">
-              <em>${data.disclaimer}</em>
-            </div>
-          </div>
-        `;
-      } catch (e) {
-        box.innerHTML = `<span style="color:#ef4444;">Evaluation error: ${e}</span>`;
+        alert('Failed to save verdict: ' + e);
       }
     }
 
@@ -1141,138 +1049,158 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         const data = await res.json();
         const blocks = data.active_blocks || [];
         if (blocks.length === 0) {
-          container.innerHTML = '<p style="color:#94a3b8;">No active containment blocks currently enforced. All network perimeters clear.</p>';
+          container.innerHTML = '<p style="color:var(--text-secondary);">No active containment rules currently enforced.</p>';
           return;
         }
-        let html = '<table><thead><tr><th>Rule ID</th><th>Target IP</th><th>Mode</th><th>Duration</th><th>Applied At</th><th>Expires At</th><th>Admin Approver</th><th>Action</th></tr></thead><tbody>';
+
+        let html = '<table><thead><tr><th>Rule ID</th><th>Target Address</th><th>Duration</th><th>Expires At</th><th>Enforcement</th><th>Action</th></tr></thead><tbody>';
         blocks.forEach(b => {
           html += `<tr>
-            <td><code>${b.block_id}</code></td>
-            <td><strong style="color:#f87171;">${b.ip_address}</strong></td>
-            <td><code>${b.execution_mode}</code></td>
-            <td>${b.duration_minutes ? b.duration_minutes + ' min' : 'Permanent'}</td>
-            <td><small>${b.applied_at || ''}</small></td>
-            <td><small style="color:#fdba74;">${b.expires_at || 'Never'}</small></td>
-            <td>${b.admin_approver || 'Pending'}</td>
+            <td><code>${escapeHTML(b.block_id)}</code></td>
+            <td><strong>${escapeHTML(b.target_ip)}</strong></td>
+            <td>${b.duration_minutes ? escapeHTML(String(b.duration_minutes)) + ' min' : 'Permanent'}</td>
+            <td><small style="color:var(--text-secondary);">${escapeHTML(b.expires_at || 'Never')}</small></td>
+            <td><span class="sa-badge sa-badge-success">Simulated Only</span></td>
             <td>
-              <button class="btn btn-danger" style="padding:4px 8px; font-size:0.75rem;" onclick="rollbackBlock('${b.block_id}')">Rollback</button>
+              <button class="btn btn-secondary" style="padding:4px 8px; font-size:0.75rem;" onclick="rollbackBlock('${escapeHTML(b.block_id)}')">Rollback</button>
             </td>
           </tr>`;
         });
         html += '</tbody></table>';
         container.innerHTML = html;
       } catch (e) {
-        container.innerHTML = `<p style="color:red;">Failed to load active containment rules: ${e}</p>`;
+        container.innerHTML = `<p style="color:red;">Error loading blocks: ${escapeHTML(e)}</p>`;
       }
     }
 
     async function rollbackBlock(blockId) {
-      if (!confirm(`Are you sure you want to rollback containment rule ${blockId}?`)) return;
+      if (!confirm(`Revoke containment rule ${blockId}?`)) return;
       try {
         const res = await fetch('/api/blocks/rollback', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             block_id: blockId,
-            admin_user: 'SOC Admin (Dashboard)',
-            reason: 'Authorized manual analyst rollback'
+            operator: 'Security Assistant User'
           })
         });
         const data = await res.json();
-        alert(`Rollback status: ${data.status} for ${blockId}`);
+        alert(`Rule ${blockId} rolled back successfully.`);
         loadActiveBlocks();
-        loadAuditTrail();
       } catch (e) {
-        alert(`Rollback failed: ${e}`);
+        alert('Failed to rollback rule: ' + e);
+      }
+    }
+
+    async function loadActivityTimeline() {
+      const container = document.getElementById('activityTableContainer');
+      try {
+        const res = await fetch('/api/audit');
+        const logs = await res.json();
+        if (!logs || logs.length === 0) {
+          container.innerHTML = '<p style="color:var(--text-secondary);">No activity records found.</p>';
+          return;
+        }
+
+        let html = '<table><thead><tr><th>When</th><th>Activity</th><th>Target Host</th><th>Source Origin</th><th>Result</th></tr></thead><tbody>';
+        logs.forEach(l => {
+          html += `<tr>
+            <td><small style="color:var(--text-secondary);">${escapeHTML(l.timestamp)}</small></td>
+            <td><strong>${escapeHTML(l.action_type.replace(/_/g, ' '))}</strong></td>
+            <td><code>${escapeHTML(l.target_ip)}</code></td>
+            <td><span class="sa-badge sa-badge-warning">Demo Simulation</span></td>
+            <td><span class="sa-badge sa-badge-neutral">${escapeHTML(l.result)}</span></td>
+          </tr>`;
+        });
+        html += '</tbody></table>';
+        container.innerHTML = html;
+      } catch (e) {
+        container.innerHTML = `<p style="color:red;">Error loading activity: ${escapeHTML(e)}</p>`;
+      }
+    }
+
+    async function loadMLStatus() {
+      const box = document.getElementById('mlMetricsContainer');
+      try {
+        const res = await fetch('/api/ml/status');
+        const data = await res.json();
+        box.innerHTML = `
+          <h4>Active Isolation Forest Model</h4>
+          <p style="color:var(--text-secondary); font-size:0.85rem; margin-top:4px;">
+            Version: <strong>${escapeHTML(data.active_model_version)}</strong><br>
+            Status: ${data.is_fitted ? '🟢 Active & Fitted' : '🔴 Uncalibrated'}
+          </p>
+          <pre style="background:#090d16; color:#38bdf8; padding:10px; border-radius:6px; font-size:0.75rem; margin-top:8px;">${escapeHTML(JSON.stringify(data.metrics || {}, null, 2))}</pre>
+        `;
+      } catch (e) {
+        box.innerHTML = `<p style="color:red;">Failed to load ML: ${escapeHTML(e)}</p>`;
+      }
+    }
+
+    async function retrainModel() {
+      const resultBox = document.getElementById('retrainResult');
+      resultBox.innerHTML = 'Running controlled retraining on synthetic fixtures...';
+      try {
+        const res = await fetch('/api/ml/retrain', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sample_count: 250, contamination: 0.15 })
+        });
+        const data = await res.json();
+        resultBox.innerHTML = `<span style="color:var(--status-success);">✅ Model ${escapeHTML(data.new_model_version)} retrained and promoted.</span>`;
+        loadMLStatus();
+      } catch (e) {
+        resultBox.innerHTML = `<span style="color:red;">Retraining failed: ${escapeHTML(e)}</span>`;
       }
     }
 
     async function runIngestion() {
-      const select = document.getElementById('sampleSelect');
-      const sample = select.value;
+      const sel = document.getElementById('sampleSelect').value;
       const resBox = document.getElementById('ingestionResults');
-      resBox.innerHTML = '<p>Processing telemetry and correlating incidents...</p>';
+      resBox.innerHTML = 'Processing telemetry stream...';
       try {
-        const res = await fetch('/api/sample/' + sample);
+        const res = await fetch('/api/sample/' + sel);
         const data = await res.json();
-        let html = `<div style="background:#0f172a; padding:16px; border-radius:8px; margin-top:16px; border:1px solid #1e293b;">
-          <h3 style="color:#10b981; margin-bottom:12px;">✅ Processed ${data.total_records} Telemetry Flows. Identified ${data.correlated_incidents.length} Correlated Incident(s).</h3>`;
-        data.correlated_incidents.forEach(inc => {
-          html += `<div style="border-left:4px solid #f97316; padding-left:12px; margin-bottom:12px;">
-            <strong>[${inc.severity}] ${inc.incident_id}: ${inc.category}</strong> (${inc.source_ip} -> ${inc.destination_ip})<br>
-            <small style="color:#94a3b8;">${inc.evidence}</small>
-          </div>`;
-        });
-        html += '</div>';
-        resBox.innerHTML = html;
+        resBox.innerHTML = `<div style="background:#DEF7EC; color:#16835D; padding:12px; border-radius:6px; margin-top:10px;">
+          ✅ Analyzed ${data.total_records} records. Correlated ${data.correlated_incidents.length} incident(s).
+        </div>`;
         loadStatus();
       } catch (e) {
-        resBox.innerHTML = `<p style="color:red;">Ingestion error: ${e}</p>`;
+        resBox.innerHTML = `<p style="color:red;">Ingestion error: ${escapeHTML(e)}</p>`;
       }
     }
 
     async function fetchLiveStream() {
       const container = document.getElementById('liveStreamTable');
-      container.innerHTML = '<p>Streaming live telemetry...</p>';
+      container.innerHTML = 'Streaming live simulated events...';
       try {
         const res = await fetch('/api/simulate');
         const data = await res.json();
-        let html = '<table><thead><tr><th>Type</th><th>Time</th><th>Source IP</th><th>Target IP</th><th>Port</th><th>Packets</th><th>Activity</th><th>Risk</th></tr></thead><tbody>';
+        let html = '<table><thead><tr><th>Type</th><th>Time</th><th>Source Host</th><th>Packets</th><th>Risk</th></tr></thead><tbody>';
         data.events.forEach(e => {
           html += `<tr>
-            <td><code style="color:#93c5fd;">${e['Telemetry Type']}</code></td>
-            <td>${e['Time']}</td>
-            <td><code>${e['Source IP']}</code></td>
-            <td><code>${e['Destination IP']}</code></td>
-            <td>${e['Port']}</td>
-            <td>${e['Packets']}</td>
-            <td>${e['Activity']}</td>
-            <td><span class="badge badge-${e['Risk'].toLowerCase()}">${e['Risk']}</span></td>
+            <td><code style="color:var(--accent-primary);">${escapeHTML(e['Telemetry Type'])}</code></td>
+            <td>${escapeHTML(e['Time'])}</td>
+            <td><code>${escapeHTML(e['Source IP'])}</code></td>
+            <td>${escapeHTML(String(e['Packets']))}</td>
+            <td><span class="sa-badge sa-badge-neutral">${escapeHTML(e['Risk'])}</span></td>
           </tr>`;
         });
         html += '</tbody></table>';
         container.innerHTML = html;
       } catch (e) {
-        container.innerHTML = `<p style="color:red;">Streaming error: ${e}</p>`;
-      }
-    }
-
-    async function loadAuditTrail() {
-      const container = document.getElementById('auditTable');
-      try {
-        const res = await fetch('/api/audit');
-        const list = await res.json();
-        if (!list || list.length === 0) {
-          container.innerHTML = '<p>No audit entries recorded yet.</p>';
-          return;
-        }
-        let html = '<table><thead><tr><th>Timestamp</th><th>Incident ID</th><th>Action</th><th>Target IP</th><th>Mode</th><th>Result</th></tr></thead><tbody>';
-        list.forEach(a => {
-          html += `<tr>
-            <td>${a.timestamp}</td>
-            <td><code>${a.incident_id}</code></td>
-            <td>${a.action_type}</td>
-            <td><code>${a.target_ip}</code></td>
-            <td><code>${a.execution_mode}</code></td>
-            <td><span class="badge badge-low">${a.result}</span></td>
-          </tr>`;
-        });
-        html += '</tbody></table>';
-        container.innerHTML = html;
-      } catch (e) {
-        container.innerHTML = `<p style="color:red;">Failed to load audit logs: ${e}</p>`;
+        container.innerHTML = `<p style="color:red;">Streaming error: ${escapeHTML(e)}</p>`;
       }
     }
 
     async function resetDemo() {
-      if (confirm('Reset database to clean security demo incidents?')) {
-        await fetch('/api/reset-demo', { method: 'POST' });
-        loadStatus();
-        loadIncidents();
-      }
+      if (!confirm('Reset database to baseline demonstration state?')) return;
+      await fetch('/api/reset-demo', { method: 'POST' });
+      loadStatus();
+      loadIncidents();
     }
 
-    // Initialize dashboard
+    // Initialize home page
     loadStatus();
   </script>
 </body>

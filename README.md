@@ -1,14 +1,27 @@
-# 🛡️ SentinelAI — Machine Learning Threat Intelligence & Adaptive Response Platform
+# 🛡️ SentinelAI — Your Security Assistant & Threat Defense Platform
 
 [![Python Version](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/)
 [![Framework](https://img.shields.io/badge/Streamlit-1.44+-FF4B4B.svg)](https://streamlit.io/)
 [![Cloud API](https://img.shields.io/badge/FastAPI-Vercel%20Serverless-009688.svg)](https://fastapi.tiangolo.com/)
-[![Testing](https://img.shields.io/badge/Pytest-68%20Passed-brightgreen.svg)](https://pytest.org/)
+[![Testing](https://img.shields.io/badge/Pytest-75%20Passed-brightgreen.svg)](https://pytest.org/)
 [![ML Library](https://img.shields.io/badge/scikit--learn-Isolation%20Forest-F7931E.svg)](https://scikit-learn.org/)
 [![AI Engine](https://img.shields.io/badge/Google%20Gemini-genai--sdk-4285F4.svg)](https://ai.google.dev/)
+[![Design](https://img.shields.io/badge/UI-Approachable%20Light%20Theme-2457A7.svg)](README.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-SentinelAI is an enterprise-grade, defensive cybersecurity telemetry monitoring, machine learning anomaly detection, threat intelligence memory, and safe incident response orchestration platform. It combines deterministic multi-event temporal correlation rules with unsupervised **scikit-learn Isolation Forest** machine learning anomaly scoring, persistent threat memory in **SQLite**, ground-truth analyst feedback tracking, grounded **Google Gemini** threat investigation, and multi-layered **safe defensive response orchestration** with automated block expiry and rollback.
+SentinelAI is an approachable, defensive cybersecurity application designed to empower everyday computer users to understand suspicious activity and decide what to do next, backed by rigorous multi-event detection, machine learning, and safe response safeguards.
+
+Built on the design principle: **"Simple by default. Technical details on demand."**
+
+### 🌟 Redesigned User Experience:
+- **Calm, Approachable Light Theme:** Curated palette featuring soft background (`#F4F7FB`), crisp white cards (`#FFFFFF`), high-contrast slate text (`#172B4D`), subtle borders (`#E2E8F0`), and clear status accents (`#2457A7` primary, `#16835D` safe, `#B7791F` review, `#C0392B` danger).
+- **Streamlined 4-Destination Navigation:**
+  1. **🏠 Home:** Unmistakable sensor status badge, real-state KPI cards, dynamic recommended next step, and recent activity.
+  2. **⚠️ Threats:** Plain-English incident cards, search/filter, and the structured 5-question breakdown (*What happened, Why it matters, Evidence, Uncertainties, Next steps*) with collapsible technical deep dives.
+  3. **🛡️ Protection:** Plain-English simulation overview, active temporary rules with expiry, and one-click rollback controls.
+  4. **📋 Activity:** Clean chronological audit log of all events, analyst feedback, and response attempts.
+  5. **⚙️ Advanced Tools:** Modular workspace for ML intelligence, AI Threat Copilot, ingestion, live monitoring, and retention settings.
+- **Honest Defensive Architecture:** Live containment requests explicitly state simulation status without false claims of OS firewall manipulation. API endpoints enforce server-side authentication (`X-Sentinel-Admin-Key`) on privileged operations.
 
 ---
 

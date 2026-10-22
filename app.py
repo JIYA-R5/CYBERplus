@@ -1,15 +1,24 @@
 """
-SentinelAI - AI-Powered Network Intrusion Detection & Incident Response Platform
-Autonomous telemetry monitoring, behavioral anomaly correlation, Machine Learning Threat Intelligence,
-Google Gemini Copilot, and safe, auditable incident response playbooks.
+SentinelAI - Your Security Assistant
+Simple by default. Technical details on demand.
+Understand suspicious activity and decide what to do next.
 """
 
 import os
 import datetime
+from typing import Dict, Any, List, Optional
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
 import streamlit as st
+from dotenv import load_dotenv
+
+# Ensure local environment (.env.local / .env) is loaded directly
+_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+if os.path.isfile(os.path.join(_BASE_DIR, ".env")):
+    load_dotenv(os.path.join(_BASE_DIR, ".env"), override=False)
+if os.path.isfile(os.path.join(_BASE_DIR, ".env.local")):
+    load_dotenv(os.path.join(_BASE_DIR, ".env.local"), override=True)
+load_dotenv()
 
 # Backend engine modules
 from detector import ThreatDetector, get_detector, Incident
@@ -21,15 +30,17 @@ from log_parser import LogParser
 from live_monitor import LiveMonitoringSimulator, get_live_simulator
 from ml_engine import get_ml_engine, MLAnomalyEngine
 
-# Page configuration
+# ------------------------------------------------------------------------------
+# PAGE CONFIGURATION (Light theme by default)
+# ------------------------------------------------------------------------------
 st.set_page_config(
-    page_title="SentinelAI - ML Threat Intelligence & SOC Defense",
+    page_title="SentinelAI — Your Security Assistant",
     page_icon="🛡️",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Initialize singletons and database
+# Initialize backend singletons
 detector = get_detector()
 analyzer = get_analyzer()
 explainer = get_explainer()
@@ -38,670 +49,968 @@ db = get_db()
 live_sim = get_live_simulator()
 ml_engine = get_ml_engine()
 
-# Ensure demo data exists if empty
+# Ensure baseline demo data exists if database is brand new
 if not db.get_incidents():
     db.reset_demo_data()
 
-# Custom CSS for polished cybersecurity SOC styling
+# ------------------------------------------------------------------------------
+# CENTRALIZED LIGHT THEME CSS TOKENS
+# ------------------------------------------------------------------------------
 st.markdown("""
 <style>
-    .metric-card {
-        background: linear-gradient(135deg, #1E293B 0%, #0F172A 100%);
-        padding: 16px 20px;
+    /* SentinelAI Approachable Light Theme */
+    :root {
+        --bg-app: #F4F7FB;
+        --card-bg: #FFFFFF;
+        --text-primary: #172B4D;
+        --text-secondary: #667085;
+        --accent-primary: #2457A7;
+        --status-success: #16835D;
+        --status-warning: #B7791F;
+        --status-danger: #C0392B;
+        --border-color: #E2E8F0;
+    }
+
+    .stApp {
+        background-color: #F4F7FB;
+        color: #172B4D;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    /* Clean Card Container */
+    .sa-card {
+        background-color: #FFFFFF;
+        border: 1px solid #E2E8F0;
         border-radius: 10px;
-        border-left: 5px solid #3B82F6;
-        color: white;
+        padding: 20px 24px;
+        margin-bottom: 16px;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+    }
+
+    /* Metric Stat Box */
+    .sa-stat-box {
+        background: #FFFFFF;
+        border: 1px solid #E2E8F0;
+        border-radius: 8px;
+        padding: 18px 20px;
         margin-bottom: 12px;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
     }
-    .badge-critical {
-        background-color: #DC2626;
-        color: white;
-        padding: 4px 10px;
-        border-radius: 6px;
-        font-weight: 700;
-        font-size: 0.85rem;
-    }
-    .badge-high {
-        background-color: #EA580C;
-        color: white;
-        padding: 4px 10px;
-        border-radius: 6px;
-        font-weight: 700;
-        font-size: 0.85rem;
-    }
-    .badge-medium {
-        background-color: #D97706;
-        color: white;
-        padding: 4px 10px;
-        border-radius: 6px;
+    .sa-stat-label {
+        font-size: 0.82rem;
         font-weight: 600;
-        font-size: 0.85rem;
+        color: #667085;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 4px;
     }
-    .badge-low {
-        background-color: #16A34A;
-        color: white;
-        padding: 4px 10px;
+    .sa-stat-val {
+        font-size: 1.85rem;
+        font-weight: 700;
+        color: #172B4D;
+        line-height: 1.2;
+    }
+    .sa-stat-sub {
+        font-size: 0.85rem;
+        color: #667085;
+        margin-top: 4px;
+    }
+
+    /* Sensor Status Banner */
+    .sa-sensor-banner {
+        background: #FFFFFF;
+        border: 1px solid #E2E8F0;
+        border-left: 4px solid #2457A7;
+        border-radius: 8px;
+        padding: 14px 20px;
+        margin-bottom: 20px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+
+    /* Badges */
+    .sa-badge {
+        display: inline-block;
+        padding: 3px 9px;
         border-radius: 6px;
+        font-size: 0.78rem;
         font-weight: 600;
-        font-size: 0.85rem;
     }
+    .sa-badge-danger {
+        background-color: #FEE2E2;
+        color: #C0392B;
+        border: 1px solid #FCA5A5;
+    }
+    .sa-badge-warning {
+        background-color: #FEF3C7;
+        color: #B7791F;
+        border: 1px solid #FCD34D;
+    }
+    .sa-badge-success {
+        background-color: #D1FAE5;
+        color: #16835D;
+        border: 1px solid #6EE7B7;
+    }
+    .sa-badge-neutral {
+        background-color: #F1F5F9;
+        color: #667085;
+        border: 1px solid #E2E8F0;
+    }
+    .sa-badge-accent {
+        background-color: #E0E7FF;
+        color: #2457A7;
+        border: 1px solid #C7D2FE;
+    }
+
+    /* Action Recommendation Card */
+    .sa-recommendation {
+        background-color: #EFF6FF;
+        border: 1px solid #BFDBFE;
+        border-radius: 8px;
+        padding: 16px 20px;
+        margin: 16px 0;
+    }
+
+    /* Tab styling */
     .stTabs [data-baseweb="tab-list"] {
-        gap: 8px;
+        gap: 12px;
+        border-bottom: 2px solid #E2E8F0;
+        margin-bottom: 20px;
     }
-    .stTabs [data-baseweb="tab"] {
-        border-radius: 6px;
-        padding: 8px 16px;
-        font-weight: 600;
+    .stTabs [data-baseweb="tab"],
+    .stTabs [data-baseweb="tab"] *,
+    .stTabs [data-baseweb="tab"] p,
+    .stTabs [data-baseweb="tab"] span {
+        padding: 6px 12px;
+        font-weight: 600 !important;
+        font-size: 0.95rem;
+        color: #172B4D !important;
+        border-radius: 6px 6px 0 0;
     }
-    .verdict-badge {
-        padding: 3px 8px;
-        border-radius: 4px;
-        font-weight: bold;
-        font-size: 0.8rem;
+    .stTabs [aria-selected="true"],
+    .stTabs [aria-selected="true"] *,
+    .stTabs [aria-selected="true"] p {
+        color: #2457A7 !important;
+        font-weight: 700 !important;
+        border-bottom: 3px solid #2457A7 !important;
     }
-    .verdict-tp { background: #DC2626; color: white; }
-    .verdict-fp { background: #3B82F6; color: white; }
-    .verdict-benign { background: #10B981; color: white; }
-    .verdict-unresolved { background: #6B7280; color: white; }
+
+    /* Universal Dark Text for All Widget Labels & Inputs */
+    div[data-testid="stWidgetLabel"],
+    div[data-testid="stWidgetLabel"] *,
+    label[data-testid="stWidgetLabel"] * {
+        color: #172B4D !important;
+        font-weight: 600 !important;
+    }
+
+    /* Radio button options and labels */
+    div[data-testid="stRadio"],
+    div[data-testid="stRadio"] *,
+    div[data-testid="stRadio"] label,
+    div[data-testid="stRadio"] p,
+    div[data-testid="stRadio"] span,
+    div[data-testid="stRadio"] div,
+    div[data-testid="stRadio"] [data-testid="stMarkdownContainer"] p,
+    div[data-baseweb="radio"],
+    div[data-baseweb="radio"] *,
+    div[data-baseweb="radio"] div,
+    div[data-baseweb="radio"] span,
+    div[data-baseweb="radio"] label {
+        color: #172B4D !important;
+        font-weight: 500 !important;
+    }
+
+    /* Slider labels, numbers, and tick values */
+    div[data-testid="stSlider"],
+    div[data-testid="stSlider"] *,
+    div[data-testid="stSlider"] label,
+    div[data-testid="stSlider"] p,
+    div[data-testid="stSlider"] div,
+    div[data-testid="stSlider"] span {
+        color: #172B4D !important;
+        font-weight: 500 !important;
+    }
+
+    /* Selectbox dropdown text */
+    div[data-testid="stSelectbox"] *,
+    div[data-baseweb="select"] * {
+        color: #172B4D !important;
+    }
+
+    /* General headings and paragraphs */
+    .stMarkdown, .stMarkdown *, p, span, li {
+        color: #172B4D;
+    }
+    .stCaption, [data-testid="stCaptionContainer"] p {
+        color: #667085 !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
-# ==============================================================================
-# SIDEBAR CONTROLS & ENVIRONMENT STATUS
-# ==============================================================================
-st.sidebar.title("🛡️ SentinelAI SOC")
-st.sidebar.caption("Machine Learning Threat Intelligence & Adaptive Defense")
 
-# Environmental Status Check
-gemini_status = "🟢 Active (GenAI Live)" if explainer.is_gemini_active else "🟡 Offline (Rule Fallback)"
-st.sidebar.markdown(f"**Gemini AI Status:** {gemini_status}")
+# ------------------------------------------------------------------------------
+# PLAIN-ENGLISH HELPER FUNCTIONS
+# ------------------------------------------------------------------------------
+def get_plain_english_title(category: str) -> str:
+    """Translate technical attack classifications into friendly, clear titles."""
+    titles = {
+        "Port Scan": "Network Port Scanning",
+        "Brute Force": "Repeated Login Attempts",
+        "Traffic Burst": "Rapid Web Request Surge",
+        "DDoS Surge": "High-Volume Traffic Surge",
+        "Volumetric DDoS": "High-Volume Traffic Surge",
+        "Data Exfiltration": "Unusual Outbound Data Transfer",
+        "Suspicious Reconnaissance": "Network Reconnaissance Activity",
+        "High Volume Anomaly": "Unusual High-Volume Flow"
+    }
+    return titles.get(category, category)
 
-active_model_info = db.get_active_model()
-active_ver = active_model_info["version"] if active_model_info else ml_engine.model_version
-st.sidebar.markdown(f"**ML Engine Version:** `{active_ver}`")
-st.sidebar.markdown(f"**Algorithm:** `IsolationForest (k-trees=100)`")
 
-# Dry Run Safety Switch
-st.sidebar.divider()
-is_dry_run = st.sidebar.checkbox("🔒 Enforce Dry-Run Mode (Safe)", value=True, help="When enabled, containment actions generate firewall commands without modifying real host OS state.")
-if is_dry_run:
-    st.sidebar.info("🛡️ Dry-Run Active: Containment policies are safely simulated.")
-else:
-    st.sidebar.warning("⚠️ Live Execution Mode: Authorized containment actions will apply firewall rules (Requires Explicit Admin Approval).")
+def get_plain_english_summary(incident: Dict[str, Any]) -> str:
+    """Generate a friendly one-sentence summary for non-technical users."""
+    category = incident.get("category", "")
+    src = incident.get("source_ip", "A remote device")
+    dst = incident.get("destination_ip", "your network")
+    ports = incident.get("destination_ports", [])
+    count = incident.get("event_count", 1)
+
+    if category == "Port Scan":
+        return f"{src} probed {len(ports)} different network ports in a short time to look for open services."
+    elif category == "Brute Force":
+        return f"{src} repeatedly attempted to log into an administrative service on port {ports[0] if ports else 22}."
+    elif category == "Traffic Burst":
+        return f"{src} sent a rapid burst of connection requests to a web service, creating temporary load."
+    elif category in ("DDoS Surge", "Volumetric DDoS"):
+        return f"A high volume of data packets was directed toward {dst}, which could overwhelm connection capacity."
+    elif category == "Data Exfiltration":
+        return f"An unusually large amount of data was transmitted from {dst} to external address {src}."
+    elif category == "Suspicious Reconnaissance":
+        return f"{src} was observed scanning multiple addresses to map out connected devices."
+    return f"Suspicious network pattern ({category}) observed between {src} and {dst}."
+
+
+def get_plain_english_breakdown(incident: Dict[str, Any]) -> Dict[str, Any]:
+    """Structure incident explanation into the 5 core questions."""
+    category = incident.get("category", "Suspicious Activity")
+    src = incident.get("source_ip", "Unknown host")
+    dst = incident.get("destination_ip", "Internal system")
+    ports = incident.get("destination_ports", [])
+    packets = incident.get("total_packets", 0)
+    evidence = incident.get("evidence", "")
+    rec_cnt = incident.get("recurrence_count", 1)
+
+    # 1. What happened?
+    if category == "Port Scan":
+        what_happened = (
+            f"The device at {src} attempted to contact {len(ports)} different network ports on your systems "
+            f"within a few seconds. In normal operation, devices usually communicate over just one or two specific ports."
+        )
+    elif category == "Brute Force":
+        what_happened = (
+            f"The device at {src} made repeated, rapid connection or login attempts against port(s) {ports}. "
+            f"This behavior is characteristic of an automated script guessing passwords."
+        )
+    elif category == "Traffic Burst":
+        what_happened = (
+            f"A concentrated burst of connection requests was sent to port(s) {ports} on {dst}, "
+            f"causing a sudden spike in traffic volume."
+        )
+    elif category in ("DDoS Surge", "Volumetric DDoS"):
+        what_happened = (
+            f"A flood of {packets:,} packets was directed toward {dst}. "
+            f"This volume significantly exceeds normal operating baselines."
+        )
+    else:
+        what_happened = f"The sensor detected unusual network communication ({category}) from {src} to {dst} involving {packets:,} packets."
+
+    # 2. Why might it matter?
+    if category == "Port Scan":
+        why_matters = (
+            "Port scanning is often a preparatory step where an attacker searches for unpatched or poorly protected services. "
+            "If vulnerable ports are exposed, they may attempt an unauthorized connection."
+        )
+    elif category == "Brute Force":
+        why_matters = (
+            "If an automated password-guessing tool is allowed to continue unchecked, it could eventually discover weak "
+            "or default credentials, granting unauthorized access to your system."
+        )
+    elif category == "Traffic Burst":
+        why_matters = (
+            "Even brief traffic spikes can slow down web applications, tie up server worker threads, or lead to temporary timeouts for legitimate users."
+        )
+    elif category in ("DDoS Surge", "Volumetric DDoS"):
+        why_matters = (
+            "Extreme packet volumes can saturate internet bandwidth and take critical services offline, resulting in downtime."
+        )
+    else:
+        why_matters = "Unusual traffic patterns can indicate security breaches, misconfigurations, or automated bots operating without authorization."
+
+    # 3. What evidence supports this assessment?
+    evidence_points = [
+        f"Factual network telemetry: {packets:,} total packets recorded to port(s) {ports}.",
+        f"Automated detection observation: {evidence}",
+        f"Historical recurrence: This address has been observed {rec_cnt} time(s) across recorded incident memory."
+    ]
+
+    # 4. What remains uncertain?
+    uncertainties = [
+        "Network IP addresses identify routing endpoints; an IP address does not prove human identity.",
+        "Legitimate activity—such as an employee mistyping a password, an authorized vulnerability scan, or a network backup—can produce similar traffic.",
+        "Statistical anomaly scores measure deviation from past baselines and are NOT proof of a malicious attack."
+    ]
+
+    # 5. What should I do next?
+    next_steps = [
+        f"Verify whether {src} belongs to an authorized internal computer, a known remote employee, or an approved automated service.",
+        "If the address is unrecognized, consider staging a simulated quarantine block in the Protection tab.",
+        "Mark an analyst review verdict (True Positive, False Alarm, or Benign) to help train the system's baseline safely."
+    ]
+
+    return {
+        "what_happened": what_happened,
+        "why_matters": why_matters,
+        "evidence_points": evidence_points,
+        "uncertainties": uncertainties,
+        "next_steps": next_steps
+    }
+
+
+def get_sensor_status_info() -> Dict[str, str]:
+    """Determine unmistakable real-time sensor connection status."""
+    if live_sim and live_sim.is_running:
+        return {
+            "title": "Live Telemetry Simulator Active",
+            "badge": "Live Simulation Active",
+            "badge_class": "sa-badge-success",
+            "desc": "Simulating multi-protocol enterprise network flows in an isolated defensive lab.",
+            "is_demo": True
+        }
+
+    if "ingested_df" in st.session_state and not st.session_state["ingested_df"].empty:
+        source_name = st.session_state.get("data_source_name", "Uploaded Security Log")
+        return {
+            "title": f"Analyzed File: {source_name}",
+            "badge": "Uploaded Data",
+            "badge_class": "sa-badge-accent",
+            "desc": f"Viewing security analysis computed from {len(st.session_state['ingested_df'])} ingested telemetry records.",
+            "is_demo": False
+        }
+
+    incidents = db.get_incidents()
+    if incidents:
+        return {
+            "title": "Demo Laboratory Simulation",
+            "badge": "Demo Simulation",
+            "badge_class": "sa-badge-warning",
+            "desc": "Viewing pre-configured laboratory demo scenario. Not connected to a real physical network interface.",
+            "is_demo": True
+        }
+
+    return {
+        "title": "No Telemetry Connected",
+        "badge": "No Telemetry Connected",
+        "badge_class": "sa-badge-neutral",
+        "desc": "The security sensor is idle. Upload a security log or load a sample scenario to begin.",
+        "is_demo": False
+    }
+
+
+# ------------------------------------------------------------------------------
+# SIDEBAR: ASSISTANT CONTROLS & ENVIRONMENT STATUS
+# ------------------------------------------------------------------------------
+st.sidebar.markdown("## 🛡️ SentinelAI")
+st.sidebar.caption("Defensive Security Assistant")
+
+sensor_info = get_sensor_status_info()
+st.sidebar.markdown(f"**Sensor Status:** <span class='sa-badge {sensor_info['badge_class']}'>{sensor_info['badge']}</span>", unsafe_allow_html=True)
+
+# Protection Mode Card
+st.sidebar.markdown("---")
+st.sidebar.markdown("### 🔒 Protection Guardrail")
+st.sidebar.info(
+    "**Simulation Mode Active (Safe)**\n\n"
+    "All firewall containment recommendations are simulated without modifying your operating system or physical network."
+)
+
+# AI Copilot Engine
+ai_engine_name = "Google Gemini Live AI" if explainer.is_gemini_active else "Local Fallback Rules"
+ai_engine_badge = "sa-badge-success" if explainer.is_gemini_active else "sa-badge-neutral"
+st.sidebar.markdown(f"**AI Engine:** <span class='sa-badge {ai_engine_badge}'>{ai_engine_name}</span>", unsafe_allow_html=True)
 
 # Quick Demo Reset
-st.sidebar.divider()
-if st.sidebar.button("🔄 Reset Demo Environment"):
+st.sidebar.markdown("---")
+if st.sidebar.button("🔄 Reset Demo Scenario", use_container_width=True):
     db.reset_demo_data()
-    st.sidebar.success("Database restored to baseline demonstration state.")
+    st.session_state.pop("ingested_df", None)
+    st.sidebar.success("Reset database to baseline sample events.")
     st.rerun()
 
-# Data Retention Policy Trigger
-st.sidebar.divider()
-st.sidebar.markdown("### 🧹 Data Retention Controls")
-retention_days = st.sidebar.slider("Retention Window (Days)", 7, 90, 30)
-if st.sidebar.button("Apply Data Retention Purge"):
-    res = db.apply_data_retention(retention_days=retention_days, operator="SOC Admin")
-    st.sidebar.success(f"Purged {res['purged_telemetry']} telemetry events & {res['purged_incidents']} resolved incidents.")
-    st.rerun()
-
-# Identity Disclaimer
 st.sidebar.caption(IDENTITY_DISCLAIMER)
 
-# ==============================================================================
-# MAIN TABS ARCHITECTURE
-# ==============================================================================
-tabs = st.tabs([
-    "📊 SOC Overview",
-    "🚨 Incident Queue",
-    "🧠 ML Threat Intelligence",
-    "🤖 AI Threat Copilot",
-    "🛡️ Active Containment & Expiry",
-    "📁 Telemetry Ingestion",
-    "📡 Live Monitoring",
-    "📜 Response Audit Trail"
+
+# ------------------------------------------------------------------------------
+# MAIN APPLICATION DESTINATIONS (4 Core Pages + Advanced Tools)
+# ------------------------------------------------------------------------------
+tab_home, tab_threats, tab_protection, tab_activity, tab_advanced = st.tabs([
+    "🏠 Home",
+    "⚠️ Threats",
+    "🛡️ Protection",
+    "📋 Activity",
+    "⚙️ Advanced Tools"
 ])
 
-# ------------------------------------------------------------------------------
-# TAB 1: SOC OVERVIEW & TELEMETRY
-# ------------------------------------------------------------------------------
-with tabs[0]:
-    incidents_list = db.get_incidents()
-    total_incidents = len(incidents_list)
-    critical_count = sum(1 for i in incidents_list if i.get("severity") == "Critical")
-    high_count = sum(1 for i in incidents_list if i.get("severity") == "High")
 
-    defcon_label = "DEFCON 1 - CRITICAL" if critical_count > 0 else ("DEFCON 2 - HIGH" if high_count > 0 else "DEFCON 5 - NOMINAL")
-    defcon_color = "#DC2626" if critical_count > 0 else ("#EA580C" if high_count > 0 else "#16A34A")
-
-    col_h1, col_h2 = st.columns([3, 1])
-    with col_h1:
-        st.title("🛡️ Enterprise Threat Defense Center")
-        st.write("Real-time behavioral intrusion detection, MITRE ATT&CK correlation, and adaptive incident containment.")
-    with col_h2:
+# ==============================================================================
+# 1. HOME SCREEN: Calm, Clear Overview
+# ==============================================================================
+with tab_home:
+    col_title, col_status = st.columns([3, 1])
+    with col_title:
+        st.title("SentinelAI — Your Security Assistant")
+        st.write("Understand suspicious activity and decide what to do next.")
+    with col_status:
         st.markdown("<br>", unsafe_allow_html=True)
         st.markdown(
-            f"<div style='background-color:{defcon_color}; padding:12px; border-radius:8px; text-align:center; color:white; font-weight:bold; font-size:1.1rem;'>"
-            f"{defcon_label}</div>",
+            f"<div style='text-align: right;'><span class='sa-badge {sensor_info['badge_class']}' style='font-size:0.95rem; padding:6px 12px;'>"
+            f"{sensor_info['badge']}</span></div>",
             unsafe_allow_html=True
         )
 
-    # Executive Briefing
-    sample_csv_path = os.path.join(os.path.dirname(__file__), "sample_traafic.csv")
-    base_df = pd.read_csv(sample_csv_path) if os.path.exists(sample_csv_path) else pd.DataFrame()
-    exec_summary = explainer.generate_executive_summary(base_df)
-    st.info(f"**🤖 AI Executive Security Briefing:** {exec_summary}")
+    # Unmistakable Monitoring Status Banner
+    st.markdown(f"""
+    <div class="sa-sensor-banner">
+        <div>
+            <strong>Sensor Connection: {sensor_info['title']}</strong><br>
+            <span style="color:#667085; font-size:0.9rem;">{sensor_info['desc']}</span>
+        </div>
+        <span class="sa-badge {sensor_info['badge_class']}">{sensor_info['badge']}</span>
+    </div>
+    """, unsafe_allow_html=True)
 
-    # Metrics
+    # Actual Database State Calculation
+    all_incidents = db.get_incidents()
+    unreviewed_count = sum(1 for i in all_incidents if i.get("analyst_verdict") in ("Unreviewed", None))
+    confirmed_count = sum(1 for i in all_incidents if i.get("analyst_verdict") == "True Positive")
+    active_blocks = db.get_active_blocks()
+    active_block_count = sum(1 for b in active_blocks if b.get("status") == "Active")
+
+    # 4 Simple Stat Cards
     m1, m2, m3, m4 = st.columns(4)
-    total_pkts = int(base_df["Packets"].sum()) if not base_df.empty and "Packets" in base_df.columns else 12500
-    m1.metric("Active Incidents", total_incidents, delta=f"{critical_count} Critical")
-    m2.metric("Telemetry Flows", len(base_df) if not base_df.empty else 10)
-    m3.metric("Aggregated Packets", f"{total_pkts:,}")
-    risk_score = 92 if critical_count > 0 else (75 if high_count > 0 else 25)
-    m4.metric("Threat Index", f"{risk_score} / 100", delta="-Defensive Active" if risk_score > 50 else "+Quiescent")
+    with m1:
+        st.markdown(f"""
+        <div class="sa-stat-box">
+            <div class="sa-stat-label">Threats Needing Review</div>
+            <div class="sa-stat-val" style="color: {'#C0392B' if unreviewed_count > 0 else '#16835D'};">{unreviewed_count}</div>
+            <div class="sa-stat-sub">{'Suspicious items awaiting decision' if unreviewed_count > 0 else 'All items reviewed'}</div>
+        </div>
+        """, unsafe_allow_html=True)
 
-    st.divider()
+    with m2:
+        st.markdown(f"""
+        <div class="sa-stat-box">
+            <div class="sa-stat-label">Confirmed Threats</div>
+            <div class="sa-stat-val" style="color: #2457A7;">{confirmed_count}</div>
+            <div class="sa-stat-sub">Verified real incidents</div>
+        </div>
+        """, unsafe_allow_html=True)
 
-    # Visualizations
-    col_c1, col_c2 = st.columns([1, 1])
-    with col_c1:
-        st.subheader("📈 Threat Severity Distribution")
-        if incidents_list:
-            sev_counts = pd.Series([i["severity"] for i in incidents_list]).value_counts().reset_index()
-            sev_counts.columns = ["Severity", "Count"]
-            color_map = {"Critical": "#DC2626", "High": "#EA580C", "Medium": "#D97706", "Low": "#16A34A"}
-            fig_pie = px.pie(
-                sev_counts,
-                values="Count",
-                names="Severity",
-                color="Severity",
-                color_discrete_map=color_map,
-                hole=0.45
-            )
-            fig_pie.update_layout(template="plotly_dark", height=320, margin=dict(t=20, b=20, l=20, r=20))
-            st.plotly_chart(fig_pie, use_container_width=True)
+    with m3:
+        st.markdown(f"""
+        <div class="sa-stat-box">
+            <div class="sa-stat-label">Protection Rules</div>
+            <div class="sa-stat-val" style="color: #B7791F;">{active_block_count}</div>
+            <div class="sa-stat-sub">Active simulated blocks</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with m4:
+        st.markdown(f"""
+        <div class="sa-stat-box">
+            <div class="sa-stat-label">Protection Mode</div>
+            <div class="sa-stat-val" style="font-size: 1.35rem; color: #16835D;">Simulated</div>
+            <div class="sa-stat-sub">Safe dry-run enforcement</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # One Clear Recommended Next Step
+    st.markdown("### 💡 Recommended Next Step")
+    if unreviewed_count > 0:
+        high_sev_unreviewed = [i for i in all_incidents if i.get("severity") in ("Critical", "High") and i.get("analyst_verdict") in ("Unreviewed", None)]
+        if high_sev_unreviewed:
+            target_inc = high_sev_unreviewed[0]
+            st.markdown(f"""
+            <div class="sa-recommendation">
+                <strong>👉 Action Needed: Review {get_plain_english_title(target_inc['category'])} from {target_inc['source_ip']}</strong><br>
+                <span style="color:#667085; font-size:0.9rem;">
+                    This activity was flagged as high priority. Go to the <strong>Threats</strong> tab to read a plain-English breakdown and decide whether to confirm it or dismiss it as a false alarm.
+                </span>
+            </div>
+            """, unsafe_allow_html=True)
         else:
-            st.info("No active incidents to chart.")
-
-    with col_c2:
-        st.subheader("🎯 Attack Category Distribution")
-        if incidents_list:
-            cat_counts = pd.Series([i["category"] for i in incidents_list]).value_counts().reset_index()
-            cat_counts.columns = ["Category", "Count"]
-            fig_bar = px.bar(
-                cat_counts,
-                x="Category",
-                y="Count",
-                color="Count",
-                color_continuous_scale="Reds",
-            )
-            fig_bar.update_layout(template="plotly_dark", height=320, margin=dict(t=20, b=20, l=20, r=20))
-            st.plotly_chart(fig_bar, use_container_width=True)
-        else:
-            st.info("No attack categories to chart.")
-
-# ------------------------------------------------------------------------------
-# TAB 2: INCIDENT MANAGEMENT & TRIAGE
-# ------------------------------------------------------------------------------
-with tabs[1]:
-    st.subheader("🚨 Security Incident Queue & Persistent Threat Memory")
-    st.write("Review correlated multi-event anomalies, inspect ML anomaly scores, record verified analyst verdicts, and dispatch safe containment.")
-
-    # Filter Controls
-    f_col1, f_col2, f_col3, f_col4 = st.columns([2, 2, 2, 3])
-    with f_col1:
-        sev_filter = st.selectbox("Filter Severity", ["All", "Critical", "High", "Medium", "Low"])
-    with f_col2:
-        status_filter = st.selectbox("Filter Status", ["All", "Open", "Investigating", "Mitigated", "Resolved", "False Positive"])
-    with f_col3:
-        verdict_filter = st.selectbox("Analyst Verdict", ["All", "Unreviewed", "True Positive", "False Positive", "Benign", "Unresolved"])
-    with f_col4:
-        search_term = st.text_input("🔍 Search Incident (ID, IP, or Category)", "")
-
-    # Retrieve incidents
-    filtered_incidents = db.get_incidents(
-        status_filter=None if status_filter == "All" else status_filter,
-        severity_filter=None if sev_filter == "All" else sev_filter,
-        verdict_filter=None if verdict_filter == "All" else verdict_filter
-    )
-
-    if search_term:
-        term = search_term.lower()
-        filtered_incidents = [
-            i for i in filtered_incidents
-            if term in i["incident_id"].lower()
-            or term in i["source_ip"].lower()
-            or term in i["category"].lower()
-        ]
-
-    if not filtered_incidents:
-        st.success("No security incidents match the current filter criteria.")
+            st.markdown(f"""
+            <div class="sa-recommendation">
+                <strong>👉 Action Recommended: Review {unreviewed_count} pending lower-priority items.</strong><br>
+                <span style="color:#667085; font-size:0.9rem;">
+                    Open the <strong>Threats</strong> tab to inspect the pending items when you have a moment.
+                </span>
+            </div>
+            """, unsafe_allow_html=True)
     else:
-        # Incident Table Overview
-        table_records = []
-        for inc in filtered_incidents:
-            table_records.append({
-                "Incident ID": inc["incident_id"],
-                "Timestamp": inc["timestamp"],
-                "Category": inc["category"],
-                "Source IP": inc["source_ip"],
-                "Recurrence": f"{inc.get('recurrence_count', 1)}x observed",
-                "Severity": inc["severity"],
-                "ML Score": f"{inc.get('ml_anomaly_score', 0.0):.2f}",
-                "Model Ver": inc.get("model_version", "v1.0.0"),
-                "Analyst Verdict": inc.get("analyst_verdict", "Unreviewed"),
-                "Status": inc["status"],
-            })
+        st.markdown("""
+        <div class="sa-recommendation" style="background:#F0FDF4; border-color:#BBF7D0;">
+            <strong style="color:#16835D;">✅ All Clear: No threats currently need review.</strong><br>
+            <span style="color:#667085; font-size:0.9rem;">
+                All monitored network activity is within expected baselines. No action is required.
+            </span>
+        </div>
+        """, unsafe_allow_html=True)
 
-        st.dataframe(pd.DataFrame(table_records), use_container_width=True, hide_index=True)
-
-        st.divider()
-        st.subheader("🛠️ Incident Drill-Down & Analyst Action Center")
-
-        incident_ids = [i["incident_id"] for i in filtered_incidents]
-        selected_id = st.selectbox("Select Incident to Triage", incident_ids)
-        current_inc = next((i for i in filtered_incidents if i["incident_id"] == selected_id), None)
-
-        if current_inc:
-            col_d1, col_d2 = st.columns([1, 1])
-
-            with col_d1:
-                st.markdown(f"### Incident {current_inc['incident_id']}: **{current_inc['category']}**")
-                st.markdown(f"**Observed Host:** `{current_inc['source_ip']}` ➡️ **Destination:** `{current_inc.get('destination_ip', 'Internal')}`")
-                ports = current_inc.get("destination_ports", [])
-                st.markdown(f"**Targeted Ports:** `{ports}` | **Protocols:** `{current_inc.get('protocols', ['TCP'])}`")
-                st.markdown(f"**First Seen:** `{current_inc.get('timestamp')}` | **Last Seen:** `{current_inc.get('last_seen', current_inc.get('timestamp'))}`")
-                st.markdown(f"**Severity:** `{current_inc['severity']}` | **Rule ID:** `{current_inc.get('rule_id', 'N/A')}` | **MITRE:** `{current_inc.get('mitre_id', 'N/A')}`")
-
-                # ML Anomaly Metrics Box
-                ml_score = current_inc.get("ml_anomaly_score", 0.0)
-                ml_ver = current_inc.get("model_version", "v1.0.0")
-                is_anom = current_inc.get("ml_is_anomaly", False)
-                st.markdown(f"""
-                <div style="background:#1E293B; padding:12px; border-radius:8px; border-left:4px solid #8B5CF6; margin: 10px 0;">
-                    <strong>🧠 ML Anomaly Evaluation (Model {ml_ver}):</strong><br>
-                    Continuous Anomaly Score: <code>{ml_score:.4f}</code> | Anomaly Flag: <code>{'YES - STATISTICAL DEVIATION' if is_anom else 'NO - WITHIN BASELINE'}</code><br>
-                    <small><em>Notice: Anomaly scores measure baseline divergence and are NOT proof of an attack.</em></small>
+    # Short Recent-Activity Summary List
+    st.markdown("### 🕒 Recent Activity")
+    audit_trail = db.get_audit_logs(limit=4)
+    if audit_trail:
+        for a in audit_trail:
+            st.markdown(f"""
+            <div style="background:#FFFFFF; border:1px solid #E2E8F0; border-radius:6px; padding:10px 16px; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center;">
+                <div>
+                    <strong>{a['action_type'].replace('_', ' ').title()}</strong>
+                    <span style="color:#667085; font-size:0.85rem; margin-left:8px;">Target: <code>{a['target_ip']}</code></span>
                 </div>
-                """, unsafe_allow_html=True)
-
-                st.info(f"📋 **Correlated Evidence:** {current_inc['evidence']}")
-
-                # Recurrence tracking
-                rec_cnt = current_inc.get("recurrence_count", 1)
-                st.caption(f"🔄 **Historical Recurrence:** Observed **{rec_cnt}** times across SentinelAI incident history.")
-                st.caption(IDENTITY_DISCLAIMER)
-
-                with st.expander("📦 Raw Telemetry Evidence"):
-                    st.code(current_inc.get("raw_evidence") or current_inc.get("evidence"), language="text")
-
-                # Analyst Verdict Form (Controlled Learning)
-                st.markdown("#### 📝 Record Analyst Verdict (Ground Truth)")
-                cur_verdict = current_inc.get("analyst_verdict", "Unreviewed")
-                verdict_choices = ["True Positive", "False Positive", "Benign", "Unresolved"]
-                default_idx = verdict_choices.index(cur_verdict) if cur_verdict in verdict_choices else 0
-
-                v_col1, v_col2 = st.columns(2)
-                with v_col1:
-                    new_verdict = st.selectbox("Select Verified Verdict", verdict_choices, index=default_idx)
-                with v_col2:
-                    reviewer_name = st.text_input("Reviewer Operator", value=current_inc.get("analyst_user") or "SOC Senior Analyst")
-
-                verdict_reason = st.text_input("Justification / Audit Reason", value=current_inc.get("analyst_reason") or "Corroborated by telemetry inspection")
-
-                if st.button("Save Analyst Verdict & Ground Truth", type="secondary"):
-                    fb_id = db.record_analyst_feedback(
-                        incident_id=selected_id,
-                        verdict=new_verdict,
-                        analyst_user=reviewer_name,
-                        reason=verdict_reason,
-                        model_version=ml_ver
-                    )
-                    st.success(f"Analyst verdict '{new_verdict}' recorded! Feedback ID: `{fb_id}`")
-                    st.rerun()
-
-                # Status Transition
-                st.markdown("#### Lifecycle State")
-                stat_col1, stat_col2, stat_col3, stat_col4 = st.columns(4)
-                if stat_col1.button("Investigating", key=f"inv_{selected_id}"):
-                    db.update_incident_status(selected_id, "Investigating")
-                    st.rerun()
-                if stat_col2.button("Mitigated", key=f"mit_{selected_id}"):
-                    db.update_incident_status(selected_id, "Mitigated")
-                    st.rerun()
-                if stat_col3.button("Resolved", key=f"res_{selected_id}"):
-                    db.update_incident_status(selected_id, "Resolved")
-                    st.rerun()
-                if stat_col4.button("False Positive", key=f"fp_{selected_id}"):
-                    db.update_incident_status(selected_id, "False Positive")
-                    st.rerun()
-
-            with col_d2:
-                st.markdown("### 🛡️ Defensive Response Orchestration")
-
-                # Allowlist check indicator
-                target_ip = current_inc["source_ip"]
-                is_allowed, allow_reason = is_ip_allowlisted(target_ip)
-                if is_allowed:
-                    st.error(f"🚫 **PROTECTED ALLOWLIST:** {allow_reason}\nContainment actions targeting this IP will be automatically blocked by safety policy.")
-                else:
-                    st.success(f"✅ **Safety Check Passed:** `{target_ip}` cleared allowlist and is eligible for authorized containment.")
-
-                # Containment Proposal Form
-                c_col1, c_col2 = st.columns(2)
-                with c_col1:
-                    rule_type = st.selectbox("Containment Rule Type", ["Temporary", "Permanent"])
-                with c_col2:
-                    duration_opts = [15, 30, 60, 120, 240]
-                    duration_min = st.selectbox("Proposed Duration (Minutes)", duration_opts, index=2) if rule_type == "Temporary" else None
-
-                admin_approval = st.checkbox("Require & Grant Explicit Administrator Approval", value=False)
-                perm_justification = ""
-                if rule_type == "Permanent":
-                    perm_justification = st.text_input("Mandatory Written Justification (Permanent Block)", "")
-
-                # Containment Execution Button
-                btn_label = f"Simulate Containment ({target_ip})" if is_dry_run else f"⚡ Execute Live Block ({target_ip})"
-                if st.button(btn_label, type="primary"):
-                    action_res = response_engine.execute_response_action(
-                        incident_id=current_inc["incident_id"],
-                        action_type="FIREWALL_QUARANTINE",
-                        target_ip=target_ip,
-                        dry_run=is_dry_run,
-                        rule_type=rule_type,
-                        duration_minutes=duration_min or 60,
-                        admin_approved=admin_approval,
-                        operator="SOC Lead Responder",
-                        justification=perm_justification if rule_type == "Permanent" else "Standard Containment",
-                        db_manager=db
-                    )
-
-                    if action_res["status"] == "SUCCESS":
-                        st.success(f"Response successfully orchestrated! Audit Record ID: `{action_res['audit_id']}` | Block ID: `{action_res.get('block_id')}`")
-                        st.write(action_res["details"])
-                    else:
-                        st.error(f"Action Rejected: {action_res.get('message', 'Validation or authorization failed.')}")
-
-                # Copyable Firewall Commands
-                plan = response_engine.get_mitigation_plan(
-                    activity=current_inc["category"],
-                    source_ip=target_ip,
-                    risk=current_inc["severity"],
-                    duration_minutes=duration_min or 60
-                )
-
-                st.markdown("#### Copyable Firewall Containment Rules")
-                fw_tabs = st.tabs(["PowerShell", "Linux iptables", "Linux ufw", "Cisco ACL"])
-                with fw_tabs[0]:
-                    st.code(plan["firewall_commands"]["Windows PowerShell"], language="powershell")
-                with fw_tabs[1]:
-                    st.code(plan["firewall_commands"]["Linux iptables"], language="bash")
-                with fw_tabs[2]:
-                    st.code(plan["firewall_commands"]["Linux ufw"], language="bash")
-                with fw_tabs[3]:
-                    st.code(plan["firewall_commands"]["Cisco IOS ACL"], language="text")
-
-                with st.expander("🔄 Reversible Rollback Scripts"):
-                    st.code(plan["rollback_commands"]["Windows PowerShell"], language="powershell")
-                    st.code(plan["rollback_commands"]["Linux iptables"], language="bash")
-
-# ------------------------------------------------------------------------------
-# TAB 3: MACHINE LEARNING THREAT INTELLIGENCE
-# ------------------------------------------------------------------------------
-with tabs[2]:
-    st.subheader("🧠 Machine Learning Threat Intelligence & Controlled Retraining")
-    st.write("Isolation Forest statistical anomaly scoring, model evaluation metrics, feature attribution, and controlled retraining pipelines.")
-
-    ml_col1, ml_col2 = st.columns([1, 1])
-
-    with ml_col1:
-        st.markdown("### 📊 Active Model Performance & Registry")
-        active_model = db.get_active_model()
-        active_v = active_model["version"] if active_model else ml_engine.model_version
-        metrics = active_model.get("metrics", {}) if active_model else ml_engine.metrics
-
-        st.markdown(f"**Active Model Version:** `{active_v}` | **Algorithm:** `Scikit-Learn IsolationForest`")
-        if metrics:
-            st.json(metrics)
-        else:
-            st.info("Active model initialized with default hyperparameters.")
-
-        st.markdown("#### 🔄 Revert to Previous Model Version")
-        all_models = db.get_model_registry()
-        if all_models:
-            versions = [m["version"] for m in all_models]
-            target_revert = st.selectbox("Select Registered Model to Activate", versions)
-            if st.button("Revert / Promote Model"):
-                success = ml_engine.revert_model(target_revert)
-                if success:
-                    db.set_active_model_version(target_revert)
-                    st.success(f"Active model reverted to {target_revert}!")
-                    st.rerun()
-                else:
-                    st.error(f"Could not load artifact for {target_revert}.")
-        else:
-            st.info("Zero registered historical models.")
-
-    with ml_col2:
-        st.markdown("### 🧪 Controlled Retraining Workflow")
-        st.caption("Controlled retraining prevents automatic model poisoning and enforces validation gates.")
-
-        retrain_samples = st.slider("Synthetic Lab Fixture Sample Count", 100, 1000, 300)
-        retrain_contam = st.slider("Target Contamination Rate", 0.05, 0.30, 0.15)
-        new_version_tag = st.text_input("New Model Version Tag (Optional)", value=f"v1.{len(all_models)+1}.0" if all_models else "v1.1.0")
-
-        if st.button("Run Controlled Retraining Pipeline", type="primary"):
-            with st.spinner("Generating synthetic lab fixtures and training Isolation Forest..."):
-                fixtures = MLAnomalyEngine.generate_synthetic_lab_fixtures(n_samples=retrain_samples)
-                retrain_res = ml_engine.train_controlled_pipeline(
-                    training_data=fixtures,
-                    version_tag=new_version_tag,
-                    contamination=retrain_contam,
-                    trained_by="SOC ML Engineer"
-                )
-
-                if retrain_res.get("status") == "VALIDATED_AND_TRAINED":
-                    db.register_model(
-                        version=retrain_res["model_version"],
-                        algorithm=retrain_res["algorithm"],
-                        sample_count=retrain_res["total_samples"],
-                        metrics=retrain_res,
-                        artifact_path=retrain_res["artifact_path"],
-                        trained_by="SOC ML Engineer",
-                        set_active=True
-                    )
-                    st.success(f"Model {retrain_res['model_version']} successfully trained, validated on test split, and promoted to active!")
-                    st.json(retrain_res)
-                    st.rerun()
-                else:
-                    st.error(f"Retraining Failed: {retrain_res.get('message')}")
-
-    st.divider()
-
-    # Interactive Real-Time Flow Scorer
-    st.subheader("⚡ Real-Time ML Anomaly Flow Scorer")
-    st.write("Input custom flow telemetry to evaluate continuous anomaly scores and feature contributions.")
-
-    test_c1, test_c2, test_c3, test_c4 = st.columns(4)
-    with test_c1:
-        test_packets = st.number_input("Packet Count", min_value=1, max_value=100000, value=120)
-    with test_c2:
-        test_port = st.number_input("Destination Port", min_value=1, max_value=65535, value=443)
-    with test_c3:
-        test_proto = st.selectbox("Protocol", ["TCP", "UDP", "ICMP"])
-    with test_c4:
-        test_action = st.selectbox("Connection Action", ["Allowed", "Blocked"])
-
-    if st.button("Calculate ML Anomaly Score"):
-        flow_record = {
-            "Packets": test_packets,
-            "Port": test_port,
-            "Protocol": test_proto,
-            "Action": test_action,
-            "Source IP": "192.168.1.55"
-        }
-        score_res = ml_engine.predict_score(flow_record)
-        st.write(f"**ML Prediction:** `{'ANOMALY' if score_res['is_anomaly'] else 'NOMINAL INLIER'}`")
-        st.write(f"**Raw Decision Function Score:** `{score_res['raw_score']}`")
-        st.write(f"**Normalized Anomaly Confidence:** `{score_res['confidence']*100:.1f}%`")
-        st.info(score_res["disclaimer"])
-
-# ------------------------------------------------------------------------------
-# TAB 4: AI COPILOT & THREAT EXPLAINER
-# ------------------------------------------------------------------------------
-with tabs[3]:
-    st.subheader("🤖 SentinelAI Threat Copilot & Root-Cause Explainer")
-    st.write("Comprehensive LLM threat reasoning powered by Google Gemini with deterministic local fallbacks.")
-
-    all_incs = db.get_incidents()
-    if not all_incs:
-        st.info("No active incidents to analyze.")
+                <div style="color:#667085; font-size:0.82rem;">{a['timestamp']}</div>
+            </div>
+            """, unsafe_allow_html=True)
     else:
-        inc_map = {f"[{i['severity']}] {i['incident_id']} - {i['category']} ({i['source_ip']})": i for i in all_incs}
-        selected_label = st.selectbox("Select Incident for AI Deep-Dive", list(inc_map.keys()))
-        target_inc = inc_map[selected_label]
+        st.info("No recorded activity yet.")
 
-        # Call explainerAI with full incident memory
-        exp = explainer.explain_incident(target_inc)
 
-        # Provider attribution
-        provider_badge = "🟢 Google Gemini GenAI" if exp["provider"] == "google_gemini" else "🟡 Deterministic Rule-Based Fallback"
-        st.caption(f"Analysis Engine: **{provider_badge}** | {exp['ai_disclaimer']}")
-        st.warning(f"🛡️ **AI Safety Policy:** {exp.get('ai_safety_notice', 'AI suggestions are advisory only and cannot trigger firewall actions.')}")
+# ==============================================================================
+# 2. THREATS PAGE: Approachable Threat Triage (5 Questions)
+# ==============================================================================
+with tab_threats:
+    st.subheader("⚠️ Suspicious Activity & Threats")
+    st.write("Review detected activity, understand what happened in plain English, and choose what action to take.")
 
-        col_a1, col_a2 = st.columns([1, 1])
+    incidents = db.get_incidents()
 
-        with col_a1:
-            st.markdown("### 📋 Executive Summary")
-            st.write(exp["summary"])
+    if not incidents:
+        st.info("No security threats currently recorded in the database.")
+    else:
+        # Search & Filter
+        col_flt1, col_flt2, col_flt3 = st.columns([2, 2, 4])
+        with col_flt1:
+            severity_filter = st.selectbox("Filter Priority", ["All Priorities", "High & Critical", "Medium & Low"])
+        with col_flt2:
+            verdict_filter = st.selectbox("Review Status", ["All Statuses", "Needs Review", "Confirmed Threats", "False Alarms", "Safe / Benign"])
+        with col_flt3:
+            search_query = st.text_input("🔍 Search by IP address, title, or ID", "")
 
-            st.markdown("### 🔎 1. Observed Network Facts")
-            st.json(exp.get("observed_facts", {}))
+        # Apply filtering
+        filtered = incidents
+        if severity_filter == "High & Critical":
+            filtered = [i for i in filtered if i.get("severity") in ("Critical", "High")]
+        elif severity_filter == "Medium & Low":
+            filtered = [i for i in filtered if i.get("severity") in ("Medium", "Low")]
 
-            st.markdown("### 📊 2. Model Predictions & Anomaly Scores")
-            st.json(exp.get("model_predictions", {}))
+        if verdict_filter == "Needs Review":
+            filtered = [i for i in filtered if i.get("analyst_verdict") in ("Unreviewed", None)]
+        elif verdict_filter == "Confirmed Threats":
+            filtered = [i for i in filtered if i.get("analyst_verdict") == "True Positive"]
+        elif verdict_filter == "False Alarms":
+            filtered = [i for i in filtered if i.get("analyst_verdict") == "False Positive"]
+        elif verdict_filter == "Safe / Benign":
+            filtered = [i for i in filtered if i.get("analyst_verdict") == "Benign"]
 
-            st.markdown("### 🎯 3. Threat Hypotheses & Scenarios")
-            st.write(exp.get("threat_hypotheses", "Hypothesis: External reconnaissance against administrative endpoints."))
+        if search_query:
+            q = search_query.lower()
+            filtered = [
+                i for i in filtered
+                if q in i.get("incident_id", "").lower()
+                or q in i.get("source_ip", "").lower()
+                or q in get_plain_english_title(i.get("category", "")).lower()
+            ]
 
-            st.markdown("### ⚙️ Technical Attack Mechanism")
-            st.write(exp["mechanism"])
+        # Threat Selector / Card List
+        st.markdown(f"**Showing {len(filtered)} item(s)**")
 
-            st.markdown(f"**MITRE ATT&CK Mapping:** `{exp['mitre_technique']}`")
+        # Create user-friendly labels for dropdown selector
+        incident_options = {
+            f"[{i.get('severity', 'Medium')}] {get_plain_english_title(i.get('category', ''))} — {i.get('source_ip')} ({i.get('incident_id')})": i
+            for i in filtered
+        }
 
-        with col_a2:
-            st.markdown("### 🔍 Forensic Investigation Checklist")
-            st.caption("Interactive triage steps for SOC analysts:")
-            for idx, step in enumerate(exp.get("investigation_steps", []), 1):
-                st.checkbox(step, key=f"chk_{target_inc['incident_id']}_{idx}")
+        if not incident_options:
+            st.info("No threats match the current search and filter settings.")
+        else:
+            selected_label = st.selectbox("Select Threat to Inspect", list(incident_options.keys()))
+            current_threat = incident_options[selected_label]
+            breakdown = get_plain_english_breakdown(current_threat)
 
-            st.markdown("### 🛡️ Recommended Containment Steps")
-            for step in exp.get("containment_recommendations", []):
-                st.markdown(f"- {step}")
+            # Prominent Threat Summary Card
+            sev_badge_class = "sa-badge-danger" if current_threat.get("severity") in ("Critical", "High") else "sa-badge-warning"
+            st.markdown(f"""
+            <div class="sa-card">
+                <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+                    <div>
+                        <h2 style="margin:0 0 4px 0; color:#172B4D; font-size:1.35rem;">{get_plain_english_title(current_threat.get('category', ''))}</h2>
+                        <span style="color:#667085; font-size:0.9rem;">From device <code>{current_threat.get('source_ip')}</code> directed at <code>{current_threat.get('destination_ip', 'Internal system')}</code></span>
+                    </div>
+                    <div>
+                        <span class="sa-badge {sev_badge_class}">{current_threat.get('severity', 'Medium')} Priority</span>
+                        <span class="sa-badge sa-badge-neutral" style="margin-left:6px;">{current_threat.get('analyst_verdict', 'Needs Review')}</span>
+                    </div>
+                </div>
+                <p style="margin:12px 0 0 0; color:#475569; font-size:0.95rem;">
+                    {get_plain_english_summary(current_threat)}
+                </p>
+            </div>
+            """, unsafe_allow_html=True)
 
-        st.divider()
+            # THE 5 CORE QUESTIONS (Simple by default)
+            col_q1, col_q2 = st.columns([1, 1])
 
-        # Interactive Analyst Q&A
-        st.subheader("💬 Ask SentinelAI Copilot")
-        copilot_query = st.text_input("Ask a follow-up question about this incident (e.g. 'How can I verify if this IP is a scanner?')")
-        if st.button("Submit Question to Copilot"):
-            if copilot_query:
-                with st.spinner("Analyzing incident context..."):
-                    if explainer.is_gemini_active and explainer.gemini_client:
-                        try:
-                            prompt = (
-                                f"You are SentinelAI, an elite SOC analyst assistant. "
-                                f"Answer this question regarding incident {target_inc['category']} from source {target_inc['source_ip']}:\n"
-                                f"Question: {copilot_query}\n"
-                                f"Provide concise, actionable cybersecurity advice. Note: IP does not prove identity."
-                            )
-                            res = explainer.gemini_client.models.generate_content(
-                                model="gemini-2.5-flash",
-                                contents=prompt
-                            )
-                            st.write(res.text)
-                        except Exception as e:
-                            st.error(f"Copilot query failed: {e}. Falling back.")
-                    else:
-                        st.write(
-                            f"**Copilot Guidance (Deterministic Fallback):** For `{target_inc['category']}`, "
-                            f"first correlate `{target_inc['source_ip']}` with internal asset inventories. "
-                            f"If the host is untrusted, enforce perimeter firewall drops and inspect related DNS query logs."
-                        )
+            with col_q1:
+                st.markdown("#### 1. What happened?")
+                st.write(breakdown["what_happened"])
 
-# ------------------------------------------------------------------------------
-# TAB 5: ACTIVE CONTAINMENT & EXPIRY WATCHDOG
-# ------------------------------------------------------------------------------
-with tabs[4]:
-    st.subheader("🛡️ Active Containment Rules & Expiry Watchdog")
-    st.write("Monitor active temporary and permanent blocks, track rule expiration, execute reversible rollbacks, and inspect allowlists.")
+                st.markdown("#### 2. Why might it matter?")
+                st.write(breakdown["why_matters"])
 
-    # Check expired blocks
+                st.markdown("#### 3. What evidence supports this assessment?")
+                for pt in breakdown["evidence_points"]:
+                    st.markdown(f"- {pt}")
+
+            with col_q2:
+                st.markdown("#### 4. What remains uncertain?")
+                for uc in breakdown["uncertainties"]:
+                    st.markdown(f"- {uc}")
+
+                st.markdown("#### 5. What should I do next?")
+                for stp in breakdown["next_steps"]:
+                    st.markdown(f"- {stp}")
+
+            st.divider()
+
+            # Review & Decision Actions
+            st.markdown("### 📝 Your Decision (Analyst Review)")
+            st.write("Mark whether this activity was a real threat, a false alarm, or safe test traffic:")
+
+            b_col1, b_col2, b_col3, b_col4 = st.columns(4)
+            inc_id = current_threat["incident_id"]
+
+            if b_col1.button("✅ Confirm Threat (True Positive)", key=f"btn_tp_{inc_id}", use_container_width=True):
+                db.record_analyst_feedback(inc_id, "True Positive", "Security Analyst", "Confirmed suspicious activity", current_threat.get("model_version", "v1.0.0"))
+                st.success("Recorded as Confirmed Threat.")
+                st.rerun()
+
+            if b_col2.button("❌ Mark as False Alarm", key=f"btn_fp_{inc_id}", use_container_width=True):
+                db.record_analyst_feedback(inc_id, "False Positive", "Security Analyst", "Normal operational traffic", current_threat.get("model_version", "v1.0.0"))
+                st.info("Recorded as False Alarm.")
+                st.rerun()
+
+            if b_col3.button("🛡️ Mark as Benign / Safe", key=f"btn_benign_{inc_id}", use_container_width=True):
+                db.record_analyst_feedback(inc_id, "Benign", "Security Analyst", "Authorized administrative scan or test", current_threat.get("model_version", "v1.0.0"))
+                st.success("Recorded as Benign activity.")
+                st.rerun()
+
+            if b_col4.button("❓ Mark Unresolved", key=f"btn_unres_{inc_id}", use_container_width=True):
+                db.record_analyst_feedback(inc_id, "Unresolved", "Security Analyst", "Pending further investigation", current_threat.get("model_version", "v1.0.0"))
+                st.warning("Marked as Unresolved.")
+                st.rerun()
+
+            # Technical Details on Demand (Expandable)
+            with st.expander("🔬 Technical Details (For Security Engineers & Auditors)"):
+                st.caption("Detailed network telemetry, ML mathematical deviation scores, and MITRE mapping:")
+
+                tech_c1, tech_c2 = st.columns(2)
+                with tech_c1:
+                    st.markdown(f"**Incident Identifier:** `{current_threat.get('incident_id')}`")
+                    st.markdown(f"**Observed Ports:** `{current_threat.get('destination_ports', [])}`")
+                    st.markdown(f"**Protocols:** `{current_threat.get('protocols', ['TCP'])}`")
+                    st.markdown(f"**Observed Timestamp:** `{current_threat.get('timestamp')}`")
+                    st.markdown(f"**Recurrence Count:** `{current_threat.get('recurrence_count', 1)}` time(s)")
+                with tech_c2:
+                    st.markdown(f"**Rule Identifier:** `{current_threat.get('rule_id', 'N/A')}`")
+                    st.markdown(f"**MITRE ATT&CK Mapping:** `{current_threat.get('mitre_id', 'N/A')}`")
+                    st.markdown(f"**ML Model Version:** `{current_threat.get('model_version', 'v1.0.0')}`")
+                    st.markdown(f"**ML Anomaly Score:** `{current_threat.get('ml_anomaly_score', 0.0):.4f}`")
+                    st.markdown(f"**Confidence Rating:** `{int(current_threat.get('confidence', 0.85)*100)}%`")
+
+                st.markdown("#### Raw Evidence Log")
+                st.code(current_threat.get("raw_evidence") or current_threat.get("evidence", "No raw evidence available"), language="text")
+
+
+# ==============================================================================
+# 3. PROTECTION PAGE: Clear Protection Mode & Controlled Containment
+# ==============================================================================
+with tab_protection:
+    st.subheader("🛡️ Protection & Containment Actions")
+    st.write("Inspect active protection rules, understand containment status, and simulate temporary blocks.")
+
+    # Honest Protection Mode Callout
+    st.markdown("""
+    <div class="sa-card" style="border-left: 4px solid #16835D;">
+        <h3 style="margin-top:0; color:#16835D;">Protection Mode: Simulated Quarantine (Dry-Run by Default)</h3>
+        <p style="color:#667085; font-size:0.95rem; margin-bottom:0;">
+            SentinelAI is operating in safe simulation mode. Recommended defensive rules are calculated and validated, 
+            but <strong>zero changes are made to your computer's live operating system firewall</strong>.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Active Rules Section
+    st.markdown("### 📋 Active Protection Policies")
+    active_blocks = db.get_active_blocks()
+
+    # Expire old blocks automatically
     expired = db.check_and_expire_blocks()
     if expired:
-        st.info(f"Watchdog auto-expired {len(expired)} temporary rule(s).")
+        st.info(f"The expiry watchdog automatically retired {len(expired)} temporary rule(s).")
 
-    active_blocks = db.get_active_blocks()
     if active_blocks:
-        st.markdown("### 📋 Tracked Firewall Block Policies")
-        block_df = pd.DataFrame([{
-            "Block ID": b["block_id"],
-            "Target IP": b["target_ip"],
-            "Rule Type": b["rule_type"],
-            "Duration": f"{b.get('duration_minutes', 'Permanent')} min" if b["rule_type"] == "Temporary" else "Permanent",
-            "Created At": b["created_at"],
-            "Expires At": b.get("expires_at") or "Never",
-            "Status": b["status"],
-            "Approval": b["approval_status"],
-            "Approved By": b.get("approved_by", "N/A"),
-            "Verification": b["verification_status"]
-        } for b in active_blocks])
-        st.dataframe(block_df, use_container_width=True, hide_index=True)
+        active_list = [b for b in active_blocks if b.get("status") == "Active"]
+        if active_list:
+            display_rows = []
+            for b in active_list:
+                display_rows.append({
+                    "Rule ID": b.get("block_id"),
+                    "Target Address": b.get("target_ip"),
+                    "Type": b.get("rule_type"),
+                    "Duration": f"{b.get('duration_minutes', 60)} min" if b.get("rule_type") == "Temporary" else "Permanent",
+                    "Expires At": b.get("expires_at", "Never"),
+                    "Enforcement Mode": "Simulated Only",
+                    "Approval": b.get("approval_status", "Approved")
+                })
+            st.dataframe(pd.DataFrame(display_rows), use_container_width=True, hide_index=True)
 
-        st.markdown("#### 🔄 Execute Manual Containment Rollback")
-        roll_ids = [b["block_id"] for b in active_blocks if b["status"] == "Active"]
-        if roll_ids:
-            target_roll = st.selectbox("Select Block ID to Rollback / Unblock", roll_ids)
-            if st.button("Roll Back Selected Block", type="secondary"):
-                res = db.rollback_block(block_id=target_roll, operator="SOC Lead Admin")
-                st.success(f"Block rule {target_roll} rolled back successfully!")
+            # Rollback / Removal Trigger
+            st.markdown("#### 🔄 Remove or Roll Back a Rule")
+            roll_ids = [b["block_id"] for b in active_list]
+            selected_roll = st.selectbox("Select Rule to Revoke", roll_ids)
+            if st.button("Roll Back / Remove Rule", type="secondary"):
+                db.rollback_block(selected_roll, operator="Security Assistant User")
+                st.success(f"Rule {selected_roll} has been safely removed and logged.")
                 st.rerun()
         else:
-            st.info("Zero active temporary blocks requiring rollback.")
+            st.info("No active containment rules currently enforced.")
     else:
-        st.info("No active containment blocks recorded in the database.")
+        st.info("No protection rules recorded in the database.")
 
     st.divider()
-    st.subheader("🛡️ Core Protected Infrastructure Allowlist")
-    st.write("These IP addresses and subnets are strictly protected from accidental or automated containment:")
-    st.code(", ".join(sorted(list(DEFAULT_PROTECTED_IPS))), language="text")
 
-# ------------------------------------------------------------------------------
-# TAB 6: TELEMETRY INGESTION & LOG FILE PARSER
-# ------------------------------------------------------------------------------
-with tabs[5]:
-    st.subheader("📁 Structured Log File Ingestion & Parser")
-    st.write("Upload Suricata EVE JSON or custom CSV security logs to extract, detect, and store incidents.")
+    # Staging a New Simulated Action
+    st.markdown("### 🧪 Propose a Containment Action")
+    st.write("Stage a defensive firewall block for a suspicious address:")
 
-    col_u1, col_u2 = st.columns([1, 1])
+    col_p1, col_p2 = st.columns(2)
+    with col_p1:
+        target_ip_input = st.text_input("Target IP Address", value="198.51.100.88")
+        block_duration = st.selectbox("Proposed Duration", [15, 30, 60, 120, 240], index=2, format_func=lambda x: f"{x} Minutes (Temporary)")
 
-    with col_u1:
-        st.markdown("### 📥 Built-in Pre-Configured Test Datasets")
-        st.caption("Select a simulated lab scenario to test the detection engine and ML pipeline:")
+    with col_p2:
+        st.markdown("<br>", unsafe_allow_html=True)
+        # Allowlist safety check
+        is_allowed, allow_reason = is_ip_allowlisted(target_ip_input)
+        if is_allowed:
+            st.error(f"🚫 **Protected Address:** {allow_reason}\nThis address cannot be blocked.")
+        else:
+            st.success(f"✅ `{target_ip_input}` passed allowlist check.")
+
+    if st.button("Simulate Temporary Block", type="primary"):
+        res = response_engine.execute_response_action(
+            incident_id="MANUAL-ASSISTANT",
+            action_type="FIREWALL_QUARANTINE",
+            target_ip=target_ip_input,
+            dry_run=True,
+            rule_type="Temporary",
+            duration_minutes=block_duration,
+            operator="Security Assistant User",
+            db_manager=db
+        )
+        if res.get("status") == "SUCCESS":
+            st.success(f"Simulated block staged successfully! Rule ID: `{res.get('block_id')}`")
+            st.write(res.get("details"))
+            st.rerun()
+        else:
+            st.error(f"Action rejected: {res.get('message')}")
+
+    # Protected Core Allowlist Section
+    with st.expander("🔒 Protected Infrastructure Allowlist (Permanently Safe Addresses)"):
+        st.write("SentinelAI will never block localhost, local gateway routers, or core public DNS servers:")
+        st.code(", ".join(sorted(list(DEFAULT_PROTECTED_IPS))), language="text")
+
+
+# ==============================================================================
+# 4. ACTIVITY PAGE: Unified Chronological Timeline
+# ==============================================================================
+with tab_activity:
+    st.subheader("📋 Security Activity Timeline")
+    st.write("A chronological history of observed events, user reviews, recommendations, and simulated containment actions.")
+
+    # Fetch audit logs
+    audit_logs = db.get_audit_logs(limit=60)
+    all_incs = db.get_incidents()
+
+    # Build timeline entries
+    timeline_entries = []
+    for a in audit_logs:
+        timeline_entries.append({
+            "Timestamp": a.get("timestamp"),
+            "Activity": a.get("action_type", "").replace("_", " ").title(),
+            "Target Host": a.get("target_ip", "System"),
+            "Mode": "Simulation" if a.get("execution_mode") == "dry_run" else a.get("execution_mode", "Local"),
+            "Result": a.get("result", "Recorded"),
+            "Source Tag": "Demo Simulation" if "sample" in a.get("details", "").lower() or "demo" in a.get("details", "").lower() else "System Event",
+            "Details": a.get("details", "")
+        })
+
+    if timeline_entries:
+        df_timeline = pd.DataFrame(timeline_entries)
+        st.dataframe(df_timeline, use_container_width=True, hide_index=True)
+    else:
+        st.info("No activity records found.")
+
+
+# ==============================================================================
+# 5. ADVANCED TOOLS: For Security Analysts & Power Users
+# ==============================================================================
+with tab_advanced:
+    st.subheader("⚙️ Advanced Tools & Deep Forensics")
+    st.caption("Access machine learning retraining, Google Gemini threat reasoning, telemetry ingestion, and raw audit logs.")
+
+    adv_tool = st.radio(
+        "Select Advanced Tool",
+        [
+            "🧠 Machine Learning Threat Intelligence",
+            "🤖 AI Threat Copilot (Google Gemini)",
+            "📁 Telemetry Ingestion & File Parser",
+            "📡 Live Monitoring Simulator",
+            "📜 Response Audit Trail Ledger",
+            "🧹 Data Retention Controls"
+        ],
+        horizontal=True
+    )
+
+    st.markdown("---")
+
+    # TOOL 1: ML THREAT INTELLIGENCE
+    if "Machine Learning" in adv_tool:
+        st.markdown("### 🧠 Machine Learning Anomaly Detection (Isolation Forest)")
+        st.write("SentinelAI utilizes an unsupervised scikit-learn Isolation Forest model to detect statistical deviations from learned network baselines.")
+
+        st.info("ℹ️ **Synthetic Training Notice:** The active model is benchmarked on synthetic laboratory fixtures. Metrics reflect synthetic distributions, not real-world network traffic.")
+
+        ml_c1, ml_c2 = st.columns(2)
+        with ml_c1:
+            active_model = db.get_active_model()
+            active_v = active_model["version"] if active_model else ml_engine.model_version
+            st.markdown(f"**Active Model:** `{active_v}` | **Algorithm:** `scikit-learn IsolationForest`")
+            metrics = active_model.get("metrics", {}) if active_model else ml_engine.metrics
+            if metrics:
+                # Approachable Summary Cards for non-technical users
+                m_kpi1, m_kpi2 = st.columns(2)
+                with m_kpi1:
+                    st.metric("Trained Telemetry Flows", f"{metrics.get('total_samples', 300):,}")
+                    st.metric("Expected Anomaly Rate", f"{int(metrics.get('contamination_parameter', 0.12) * 100)}%")
+                with m_kpi2:
+                    st.metric("Validation Gate", "Verified & Active")
+                    st.metric("Test Outliers Identified", f"{metrics.get('test_outlier_count', 8)} of {metrics.get('test_sample_count', 75)} tests")
+
+                st.markdown("**Traffic Attributes Monitored:**")
+                feats = metrics.get("features_used", ["packets", "port", "flow_frequency", "unique_ports"])
+                st.caption(" • ".join([f"`{f}`" for f in feats[:7]]))
+
+                # Technical details on demand (raw JSON hidden by default)
+                with st.expander("🛠️ Technical Details (Raw Evaluation JSON)"):
+                    st.json(metrics)
+
+            # Revert model
+            all_models = db.get_model_registry()
+            if len(all_models) > 1:
+                st.markdown("#### Revert to Previous Model")
+                versions = [m["version"] for m in all_models]
+                target_revert = st.selectbox("Select Model Version", versions)
+                if st.button("Activate Model Version"):
+                    if ml_engine.revert_model(target_revert):
+                        db.set_active_model_version(target_revert)
+                        st.success(f"Model reverted to {target_revert}!")
+                        st.rerun()
+
+        with ml_c2:
+            st.markdown("#### Controlled Model Retraining Console")
+            st.caption("Controlled retraining enforces validation gates and holdout test evaluation.")
+            retrain_samples = st.slider("Synthetic Samples", 100, 1000, 300)
+            retrain_contam = st.slider("Contamination Rate", 0.05, 0.30, 0.15)
+            if st.button("Run Controlled Retraining Pipeline", type="primary"):
+                fixtures = MLAnomalyEngine.generate_synthetic_lab_fixtures(n_samples=retrain_samples)
+                res = ml_engine.train_controlled_pipeline(
+                    training_data=fixtures,
+                    contamination=retrain_contam,
+                    trained_by="Security Engineer"
+                )
+                if res.get("status") == "VALIDATED_AND_TRAINED":
+                    db.register_model(res["model_version"], res["algorithm"], res["total_samples"], res, res["artifact_path"], "Security Engineer", set_active=True)
+                    st.success(f"Model {res['model_version']} validated and promoted to active!")
+                    st.rerun()
+                else:
+                    st.error(f"Retraining rejected by validation gate: {res.get('message')}")
+
+    # TOOL 2: AI THREAT COPILOT
+    elif "Copilot" in adv_tool:
+        st.markdown("### 🤖 Google Gemini AI Threat Copilot")
+        st.write("Contextual forensic investigation grounded in actual stored telemetry evidence.")
+
+        if explainer.is_gemini_active:
+            st.success("🟢 **Google Gemini Connected:** Using API key loaded automatically from your environment (`.env` / `.env.local`). No manual website entry required.")
+        else:
+            st.info("ℹ️ **Deterministic Local Knowledge Mode:** Gemini API key not detected in `.env` or `.env.local`. Running offline rule-based reasoning. To activate live Google Gemini, simply add `GEMINI_API_KEY=your_key` to your `.env.local` or `.env` file — the application will use it automatically without requiring any input on the website.")
+
+        st.warning("🛡️ **AI Safety Boundary:** AI suggestions are advisory hypotheses for analyst consideration. The AI cannot classify an IP as malicious or trigger firewall containment.")
+
+        all_incs = db.get_incidents()
+        if all_incs:
+            inc_map = {f"[{i['severity']}] {get_plain_english_title(i['category'])} ({i['source_ip']})": i for i in all_incs}
+            selected_label = st.selectbox("Select Incident for AI Reasoning", list(inc_map.keys()))
+            target_inc = inc_map[selected_label]
+
+            exp = explainer.explain_incident(target_inc)
+            st.caption(f"Engine: **{exp.get('provider')}** | {exp.get('ai_disclaimer')}")
+
+            col_ai1, col_ai2 = st.columns(2)
+            with col_ai1:
+                st.markdown("#### Summary & Mechanism")
+                st.write(exp.get("summary"))
+                st.write(f"**Technical Mechanism:** {exp.get('mechanism')}")
+                st.write(f"**MITRE ATT&CK:** `{exp.get('mitre_technique')}`")
+
+            with col_ai2:
+                st.markdown("#### Forensic Investigation Checklist")
+                for idx, step in enumerate(exp.get("investigation_steps", []), 1):
+                    st.checkbox(step, key=f"adv_chk_{target_inc['incident_id']}_{idx}")
+
+                st.markdown("#### Prevention Options")
+                for r in exp.get("containment_recommendations", []):
+                    st.markdown(f"- {r}")
+        else:
+            st.info("No incidents to analyze.")
+
+    # TOOL 3: TELEMETRY INGESTION
+    elif "Ingestion" in adv_tool:
+        st.markdown("### 📁 Telemetry Ingestion & File Parser")
+        st.write("Ingest Suricata EVE JSON or custom CSV security logs to detect incidents.")
+
         sample_choice = st.selectbox(
-            "Select Scenario Sample",
+            "Select Pre-Configured Test Dataset",
             [
                 "Suricata EVE JSON (73-record Audit Dataset)",
                 "Port Scan Attack (attack_port_scan.json)",
                 "Brute Force Attack (attack_brute_force.json)",
                 "DDoS Volumetric Flood (attack_ddos_flood.json)",
-                "Normal Nominal Traffic (normal_traffic.csv)",
-                "Malformed & Edge Cases (malformed_records.json)"
+                "Normal Nominal Traffic (normal_traffic.csv)"
             ]
         )
 
-        if st.button("Parse & Ingest Selected Dataset", type="primary"):
+        if st.button("Parse & Ingest Dataset", type="primary"):
             data_dir = os.path.join(os.path.dirname(__file__), "data")
             file_map = {
                 "Suricata EVE JSON (73-record Audit Dataset)": os.path.join(data_dir, "sentinelai_suricata_eve_sample.json"),
@@ -709,9 +1018,7 @@ with tabs[5]:
                 "Brute Force Attack (attack_brute_force.json)": os.path.join(data_dir, "attack_brute_force.json"),
                 "DDoS Volumetric Flood (attack_ddos_flood.json)": os.path.join(data_dir, "attack_ddos_flood.json"),
                 "Normal Nominal Traffic (normal_traffic.csv)": os.path.join(data_dir, "normal_traffic.csv"),
-                "Malformed & Edge Cases (malformed_records.json)": os.path.join(data_dir, "malformed_records.json"),
             }
-
             target_file = file_map.get(sample_choice)
             if target_file and os.path.exists(target_file):
                 if target_file.endswith(".csv"):
@@ -720,91 +1027,59 @@ with tabs[5]:
                     with open(target_file, "r", encoding="utf-8") as f:
                         raw_content = f.read()
                     if "suricata" in target_file:
-                        events, errors = LogParser.parse_suricata_eve(raw_content)
+                        events, _ = LogParser.parse_suricata_eve(raw_content)
                     else:
-                        events, errors = LogParser.parse_generic_json(raw_content)
+                        events, _ = LogParser.parse_generic_json(raw_content)
                     df_ingest = LogParser.events_to_dataframe(events)
 
                 st.session_state["ingested_df"] = df_ingest
-                st.success(f"Successfully parsed {len(df_ingest)} telemetry records!")
-            else:
-                st.error("Sample dataset file not found.")
+                st.session_state["data_source_name"] = sample_choice
+                st.success(f"Parsed {len(df_ingest)} telemetry records!")
 
-    with col_u2:
-        st.markdown("### 📤 Upload Custom Security Logs")
-        uploaded_file = st.file_uploader("Upload JSON / CSV Log Stream", type=["json", "csv"])
-        if uploaded_file is not None:
-            if uploaded_file.name.endswith(".csv"):
-                df_custom = pd.read_csv(uploaded_file)
-            else:
-                raw_text = uploaded_file.read().decode("utf-8")
-                events, errors = LogParser.parse_generic_json(raw_text)
-                df_custom = LogParser.events_to_dataframe(events)
-            st.session_state["ingested_df"] = df_custom
-            st.success(f"Custom file loaded: {len(df_custom)} records.")
+                # Correlate incidents
+                correlated = detector.correlate_incidents(df_ingest)
+                st.write(f"Identified **{len(correlated)}** correlated incident(s).")
+                for c in correlated:
+                    db.save_incident(c.to_dict())
+                st.rerun()
 
-    if "ingested_df" in st.session_state:
-        st.divider()
-        st.subheader("🔍 Ingested Telemetry Preview & Incident Correlation")
-        raw_df = st.session_state["ingested_df"]
+    # TOOL 4: LIVE MONITORING
+    elif "Live Monitoring" in adv_tool:
+        st.markdown("### 📡 Live Monitoring Simulator")
+        st.caption("Generates simulated network traffic in a defensive sandbox with `[SIMULATED: Lab Scenario]` labeling.")
 
-        # Detect with hybrid engine
-        enriched_df = detector.detect_dataframe(raw_df)
-        correlated_incs = detector.correlate_incidents(raw_df)
+        c_s1, c_s2 = st.columns(2)
+        with c_s1:
+            if st.button("▶️ Generate 10 Background Events"):
+                live_sim.start(interval_seconds=0.1)
+                import time
+                time.sleep(1.1)
+                live_sim.stop()
+                st.rerun()
+        with c_s2:
+            if st.button("💉 Inject Port Scan Probes"):
+                live_sim.inject_attack("port_scan")
+                st.success("Injected 6 port scan probe events.")
+                st.rerun()
 
-        st.dataframe(enriched_df.head(20), use_container_width=True)
+        events = live_sim.get_recent_events(limit=15)
+        if events:
+            st.dataframe(pd.DataFrame(events), use_container_width=True)
 
-        st.markdown(f"**Engine Output:** Discovered **{len(correlated_incs)}** security incident(s) from this telemetry stream.")
-        if st.button("Commit Correlated Incidents to Sentinel Database"):
-            for inc in correlated_incs:
-                db.save_incident(inc.to_dict())
-            st.success(f"Committed {len(correlated_incs)} incidents to SQLite database.")
+    # TOOL 5: AUDIT LOG
+    elif "Audit" in adv_tool:
+        st.markdown("### 📜 System Activity Audit Ledger")
+        st.write("Application activity ledger documenting containment simulations, analyst verdicts, and configuration changes.")
+        audit_records = db.get_audit_logs(limit=100)
+        if audit_records:
+            st.dataframe(pd.DataFrame(audit_records), use_container_width=True, hide_index=True)
+
+    # TOOL 6: DATA RETENTION
+    elif "Retention" in adv_tool:
+        st.markdown("### 🧹 Data Retention Controls")
+        st.write("Prune stale historical telemetry events and resolved incidents beyond a configurable retention window.")
+        retention_window = st.slider("Retention Window (Days)", 7, 90, 30)
+        if st.button("Purge Stale Records"):
+            res = db.apply_data_retention(retention_days=retention_window, operator="Security Assistant User")
+            st.success(f"Purged {res['purged_telemetry']} telemetry events and {res['purged_incidents']} resolved incidents.")
             st.rerun()
-
-# ------------------------------------------------------------------------------
-# TAB 7: LIVE MONITORING SIMULATOR
-# ------------------------------------------------------------------------------
-with tabs[6]:
-    st.subheader("📡 Real-Time Telemetry Stream Simulator")
-    st.write("Generate synthetic live background enterprise telemetry with controllable laboratory scenario injection.")
-    st.warning("⚠️ **Notice:** This simulator runs in a defensive sandbox and does not transmit network packets or affect physical network adapters.")
-
-    col_s1, col_s2, col_s3 = st.columns(3)
-    with col_s1:
-        if st.button("▶️ Start Live Stream (10 Events)"):
-            live_sim.start(interval_seconds=0.1)
-            import time
-            time.sleep(1.2)
-            live_sim.stop()
-            st.rerun()
-    with col_s2:
-        if st.button("💉 Inject Scenario: Port Scan Probing"):
-            live_sim.inject_attack("port_scan")
-            st.success("Scenario injected: 6 port scan probes emitted.")
-            st.rerun()
-    with col_s3:
-        if st.button("💉 Inject Scenario: SSH Brute Force"):
-            live_sim.inject_attack("brute_force")
-            st.success("Scenario injected: 5 SSH auth failures emitted.")
-            st.rerun()
-
-    live_events = live_sim.get_recent_events(limit=30)
-    if live_events:
-        st.markdown("### Live Stream Telemetry Buffer")
-        st.dataframe(pd.DataFrame(live_events), use_container_width=True)
-    else:
-        st.info("Live stream buffer empty. Click Start Live Stream to emit events.")
-
-# ------------------------------------------------------------------------------
-# TAB 8: AUDIT TRAIL
-# ------------------------------------------------------------------------------
-with tabs[7]:
-    st.subheader("📜 SOC Response Audit Trail & Compliance Ledger")
-    st.write("Immutable SQLite audit log documenting status transitions, defensive containment scripts, analyst verdicts, and data retention.")
-
-    audit_records = db.get_audit_logs(limit=100)
-    if audit_records:
-        df_audit = pd.DataFrame(audit_records)
-        st.dataframe(df_audit, use_container_width=True, hide_index=True)
-    else:
-        st.info("No audit logs recorded.")

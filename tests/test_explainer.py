@@ -90,3 +90,27 @@ def test_executive_summary_elevated(offline_explainer):
     assert "flagged 1 high-severity alert" in summary
     assert "Port Scan" in summary
     assert "192.168.1.15" in summary
+
+
+def test_api_key_loaded_from_environment(monkeypatch):
+    """Verify that ThreatExplainer automatically reads GEMINI_API_KEY from the environment."""
+    test_key = "test_env_key_abc_123"
+    monkeypatch.setenv("GEMINI_API_KEY", test_key)
+    explainer = ThreatExplainer()
+    assert explainer.api_key == test_key
+
+
+def test_api_key_strips_quotes_from_env(monkeypatch):
+    """Verify that quotes around keys in .env files are stripped automatically."""
+    monkeypatch.setenv("GEMINI_API_KEY", '"quoted_gemini_key_999"')
+    explainer = ThreatExplainer()
+    assert explainer.api_key == "quoted_gemini_key_999"
+
+
+def test_google_api_key_fallback(monkeypatch):
+    """Verify that GOOGLE_API_KEY is also recognized as a valid fallback environment variable."""
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setenv("GOOGLE_API_KEY", "google_fallback_key_456")
+    explainer = ThreatExplainer()
+    assert explainer.api_key == "google_fallback_key_456"
+

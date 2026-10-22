@@ -86,7 +86,7 @@ def test_admin_approval_gate_for_live_execution(response_engine, temp_db):
     assert res_unapproved["status"] == "REJECTED"
     assert res_unapproved["result"] == "ADMIN_APPROVAL_REQUIRED"
 
-    # With explicit admin approval
+    # With explicit admin approval, returns honest simulation-only result
     res_approved = response_engine.execute_response_action(
         incident_id="INC-LIVE-01",
         action_type="FIREWALL_BLOCK",
@@ -96,9 +96,9 @@ def test_admin_approval_gate_for_live_execution(response_engine, temp_db):
         operator="SOC Admin Lead",
         db_manager=temp_db
     )
-    assert res_approved["status"] == "SUCCESS"
     assert res_approved["execution_mode"] == "live"
-    assert res_approved["result"] == "VERIFIED_CONTAINED"
+    assert res_approved["result"] == "SIMULATION_ONLY_LIVE_NOT_IMPLEMENTED"
+    assert "Live firewall enforcement is not implemented; simulation only" in res_approved["details"]
 
 
 def test_permanent_block_privilege_safeguards(response_engine, temp_db):
