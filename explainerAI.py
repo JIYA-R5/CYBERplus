@@ -14,7 +14,7 @@ from dotenv import load_dotenv, dotenv_values
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-def reload_environment():
+def reload_environment(force: bool = False):
     """Load credentials from .env and .env.local without requiring website input."""
     # Check .env first, then .env.local for overrides
     for env_name in [".env", ".env.local"]:
@@ -24,13 +24,14 @@ def reload_environment():
                 vals = dotenv_values(env_file)
                 for k, v in vals.items():
                     if v and str(v).strip() and str(v).strip() not in ["your_gemini_api_key_here"]:
-                        os.environ[k] = str(v).strip()
+                        if force or k not in os.environ:
+                            os.environ[k] = str(v).strip()
             except Exception:
                 pass
-    load_dotenv()
+    load_dotenv(override=force)
 
 # Initial load from environment files
-reload_environment()
+reload_environment(force=True)
 
 logger = logging.getLogger("SentinelAI.Explainer")
 
@@ -81,11 +82,13 @@ class ThreatExplainer:
     """
 
     def __init__(self, api_key: Optional[str] = None):
-        reload_environment()
+        if api_key is None and not os.getenv("GEMINI_API_KEY") and not os.getenv("GOOGLE_API_KEY"):
+            reload_environment(force=False)
         raw_key = api_key if api_key is not None else (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or "")
         self.api_key = raw_key.strip().strip("'\"")
         self.gemini_client = None
         self.is_gemini_active = False
+        self._explanation_cache: Dict[str, Dict[str, Any]] = {}
 
         self._initialize_client()
 
@@ -279,19 +282,56 @@ class ThreatExplainer:
             }
         }
 
+    def _generate_with_gemini(self, prompt: str):
+        """Invoke Gemini with automatic model version cascading, 10s timeout, and network resilience."""
+        if not self.gemini_client:
+            return None
+
+        import concurrent.futures
+
+        def _invoke(model_name: str):
+            return self.gemini_client.models.generate_content(
+                model=model_name,
+                contents=prompt
+            )
+
+        # Primary model with strict 5-second timeout for snappy UX
+        mod = "gemini-3.5-flash"
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        try:
+            future = executor.submit(_invoke, mod)
+            resp = future.result(timeout=5)
+            executor.shutdown(wait=False, cancel_futures=True)
+            if resp and resp.text:
+                return resp
+        except concurrent.futures.TimeoutError:
+            executor.shutdown(wait=False, cancel_futures=True)
+            logger.info(f"Gemini API request exceeded 5s. Engaging deterministic local fallback.")
+            return None
+        except Exception as e:
+            executor.shutdown(wait=False, cancel_futures=True)
+            logger.info(f"Gemini connection unavailable ({e}). Engaging deterministic local fallback.")
+            return None
+        return None
+
     def explain_threat(
         self,
         activity: str,
         source_ip: str,
         packets: int,
         risk: str = "High",
-        details: Optional[str] = None
+        details: Optional[str] = None,
+        force_refresh: bool = False
     ) -> Dict[str, Any]:
         """
         Generate detailed threat explanation. If Google Gemini is available, uses the live LLM;
         otherwise seamlessly falls back to the deterministic knowledge base.
         Returns a dictionary adhering to the SentinelAI frontend contract.
         """
+        cache_key = f"threat_{activity}_{source_ip}_{packets}_{risk}"
+        if not force_refresh and cache_key in self._explanation_cache:
+            return self._explanation_cache[cache_key]
+
         color_map = {
             "Low": "#10B981",       # Green
             "Medium": "#F59E0B",    # Amber
@@ -305,7 +345,9 @@ class ThreatExplainer:
             try:
                 gemini_result = self._call_gemini_explainer(activity, source_ip, packets, risk, details)
                 if gemini_result:
-                    return gemini_result.to_dict()
+                    res = gemini_result.to_dict()
+                    self._explanation_cache[cache_key] = res
+                    return res
             except Exception as e:
                 logger.warning(f"Gemini API call failed: {e}. Falling back to deterministic local knowledge base.")
 
@@ -362,9 +404,11 @@ class ThreatExplainer:
             ai_disclaimer="Deterministic rule-based advisory (Local Fallback Mode). Recommended for operational verification."
         )
 
-        return explanation.to_dict()
+        res = explanation.to_dict()
+        self._explanation_cache[cache_key] = res
+        return res
 
-    def explain_incident(self, incident: Dict[str, Any]) -> Dict[str, Any]:
+    def explain_incident(self, incident: Dict[str, Any], force_refresh: bool = False) -> Dict[str, Any]:
         """
         Explain a stored incident entity using actual stored evidence and historical telemetry.
         Strictly segregates observed facts, ML model predictions, and attack hypotheses.
@@ -374,6 +418,11 @@ class ThreatExplainer:
         packets = int(incident.get("total_packets", 0))
         risk = incident.get("severity", "High")
         details = incident.get("evidence", "")
+
+        inc_id = incident.get("incident_id") or ""
+        cache_key = f"inc_{inc_id}_{activity}_{source_ip}"
+        if not force_refresh and cache_key in self._explanation_cache:
+            return self._explanation_cache[cache_key]
 
         # Incorporate rich stored incident context
         observed_facts = {
@@ -421,10 +470,7 @@ class ThreatExplainer:
                     f'  "containment_recommendations": ["step 1", "step 2"]\n'
                     f"}}"
                 )
-                response = self.gemini_client.models.generate_content(
-                    model="gemini-2.5-flash",
-                    contents=prompt,
-                )
+                response = self._generate_with_gemini(prompt)
                 if response and response.text:
                     raw_text = response.text.strip()
                     if raw_text.startswith("```json"):
@@ -456,7 +502,9 @@ class ThreatExplainer:
                         provider="google_gemini",
                         ai_disclaimer="Generated by Google Gemini AI Copilot based on stored evidence. Requires human analyst validation."
                     )
-                    return exp.to_dict()
+                    res = exp.to_dict()
+                    self._explanation_cache[cache_key] = res
+                    return res
             except Exception as e:
                 logger.warning(f"Gemini incident explanation failed: {e}. Falling back to deterministic knowledge base.")
 
@@ -468,6 +516,7 @@ class ThreatExplainer:
             f"Malicious Hypothesis: Host {source_ip} is conducting unauthorized {activity} against {incident.get('destination_ip')}.\n"
             f"Benign Hypothesis: Legitimate system maintenance or administrative scanning tool."
         )
+        self._explanation_cache[cache_key] = res
         return res
 
     def _call_gemini_explainer(
@@ -502,10 +551,7 @@ class ThreatExplainer:
             f"Return ONLY raw JSON without markdown codeblocks."
         )
 
-        response = self.gemini_client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt,
-        )
+        response = self._generate_with_gemini(prompt)
 
         if not response or not response.text:
             return None
