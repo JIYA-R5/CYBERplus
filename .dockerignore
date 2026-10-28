@@ -1,0 +1,40 @@
+# Git repository metadata
+.git/
+.github/
+.gitignore
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local IDE configuration
+.vscode/
+.idea/
+
+# Environment files and credentials (NEVER bake secrets into images)
+.env
+.env.local
+.env.*.local
+*.env
+!.env.example
+
+# Temporary files and logs
+*.log
+tmp/
+scratch/
+.system_generated/
+
+# SQLite WAL and lock files (persistent data belongs in named volumes)
+*.db-wal
+*.db-shm
+sentinel_data/
+sentinel_models/

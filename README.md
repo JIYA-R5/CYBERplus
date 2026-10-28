@@ -1,286 +1,267 @@
-# 🛡️ SentinelAI — Your Security Assistant & Threat Defense Platform
+# 🛡️ SentinelAI — Real-Time Network Monitoring, ML Validation, and Incident Response Platform
 
 [![Python Version](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/)
 [![Framework](https://img.shields.io/badge/Streamlit-1.44+-FF4B4B.svg)](https://streamlit.io/)
-[![Cloud API](https://img.shields.io/badge/FastAPI-Vercel%20Serverless-009688.svg)](https://fastapi.tiangolo.com/)
-[![Testing](https://img.shields.io/badge/Pytest-75%20Passed-brightgreen.svg)](https://pytest.org/)
-[![ML Library](https://img.shields.io/badge/scikit--learn-Isolation%20Forest-F7931E.svg)](https://scikit-learn.org/)
-[![AI Engine](https://img.shields.io/badge/Google%20Gemini-genai--sdk-4285F4.svg)](https://ai.google.dev/)
-[![Design](https://img.shields.io/badge/UI-Approachable%20Light%20Theme-2457A7.svg)](README.md)
+[![Cloud API](https://img.shields.io/badge/FastAPI-Production%20Ready-009688.svg)](https://fastapi.tiangolo.com/)
+[![Testing](https://img.shields.io/badge/Pytest-119%20Passed-brightgreen.svg)](https://pytest.org/)
+[![TShark](https://img.shields.io/badge/TShark-4.6.x%20(Npcap)-1E88E5.svg)](https://www.wireshark.org/)
+[![ML Pipeline](https://img.shields.io/badge/scikit--learn-Dual%20ML%20Pipelines-F7931E.svg)](https://scikit-learn.org/)
+[![Message Broker](https://img.shields.io/badge/Redis-Streams%20Buffer-DC382D.svg)](https://redis.io/)
+[![Database](https://img.shields.io/badge/Database-PostgreSQL%20%2B%20SQLite-336791.svg)](https://www.postgresql.org/)
+[![AI Engine](https://img.shields.io/badge/Google%20Gemini-Threat%20Reasoning-4285F4.svg)](https://ai.google.dev/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-SentinelAI is an approachable, defensive cybersecurity application designed to empower everyday computer users to understand suspicious activity and decide what to do next, backed by rigorous multi-event detection, machine learning, and safe response safeguards.
-
-Built on the design principle: **"Simple by default. Technical details on demand."**
-
-### 🌟 Redesigned User Experience:
-- **Calm, Approachable Light Theme:** Curated palette featuring soft background (`#F4F7FB`), crisp white cards (`#FFFFFF`), high-contrast slate text (`#172B4D`), subtle borders (`#E2E8F0`), and clear status accents (`#2457A7` primary, `#16835D` safe, `#B7791F` review, `#C0392B` danger).
-- **Streamlined 4-Destination Navigation:**
-  1. **🏠 Home:** Unmistakable sensor status badge, real-state KPI cards, dynamic recommended next step, and recent activity.
-  2. **⚠️ Threats:** Plain-English incident cards, search/filter, and the structured 5-question breakdown (*What happened, Why it matters, Evidence, Uncertainties, Next steps*) with collapsible technical deep dives.
-  3. **🛡️ Protection:** Plain-English simulation overview, active temporary rules with expiry, and one-click rollback controls.
-  4. **📋 Activity:** Clean chronological audit log of all events, analyst feedback, and response attempts.
-  5. **⚙️ Advanced Tools:** Modular workspace for ML intelligence, AI Threat Copilot, ingestion, live monitoring, and retention settings.
-- **Honest Defensive Architecture:** Live containment requests explicitly state simulation status without false claims of OS firewall manipulation. API endpoints enforce server-side authentication (`X-Sentinel-Admin-Key`) on privileged operations.
+**SentinelAI** is an enterprise-grade, AI-assisted cybersecurity platform that detects suspicious network activity, validates machine learning models against label leakage and synthetic artifacts, explains threats in clear English, and recommends safe, non-disruptive response actions.
 
 ---
 
 ## 🏛️ System Architecture
 
-```mermaid
-graph TD
-    A[Telemetry Ingestion: Suricata EVE JSON / Custom Logs / Live Simulator] --> B[Log Normalization & Feature Extractor: 12 Engineered Features]
-    B --> C[Deterministic Temporal Correlation Engine: Port Scan / Brute Force / DDoS / Burst]
-    B --> D[Unsupervised ML Anomaly Engine: scikit-learn Isolation Forest]
-    C --> E[Persistent Threat Memory SQLite: sentinel.db]
-    D --> E
-    E --> F[Incident Grouping & Recurrence Tracking Engine]
-    F --> G[Analyst Feedback Loop: TP / FP / Benign / Unresolved]
-    G --> H[Controlled Retraining Pipeline: Validation Gate & Test-Set Holdout]
-    H --> D
-    E --> I[Grounded AI Threat Copilot: Google Gemini 2.5]
-    I -.->|Offline / No API Key| J[Deterministic Local Knowledge Fallback]
-    E --> K[Safe Response Orchestration Engine]
-    K -->|Allowlist Check| L{Protected IP?}
-    L -->|Yes| M[Block Prohibited & Alert Emitted]
-    L -->|No| N{Admin Approved?}
-    N -->|Dry-Run Simulation| O[Safe Dry-Run Containment Preview]
-    N -->|Live Execution Approved| P[Platform Rules: PowerShell / iptables / ACL]
-    P --> Q[Active Containment Watchdog: Auto-Expiry & Symmetrical Rollback]
-    K --> R[Immutable SQLite Audit Trail]
+```text
++---------------------------------------------------------------------------------------------------+
+|                                      WINDOWS HOST ENVIRONMENT                                     |
+|                                                                                                   |
+|  +----------------------------------+        +-------------------------------------------------+  |
+|  |   Wireshark / Npcap (Hardware)   |        |           Offline PCAP / PCAPNG Replay          |  |
+|  |    e.g. Wi-Fi / Ethernet / Loop  |        |      (Tagged with is_replay=True flag)          |  |
+|  +-----------------+----------------+        +------------------------+------------------------+  |
+|                    |                                                  |                           |
+|                    +------------------------+-------------------------+                           |
+|                                             |                                                     |
+|                                             v                                                     |
+|                           +-----------------------------------+                                   |
+|                           |   Windows Supervised Collector    |                                   |
+|                           |  (src/collector/tshark_collector) |                                   |
+|                           |  - Bidirectional Flow Aggregation |                                   |
+|                           |  - 27 Flow Feature Extraction     |                                   |
+|                           |  - Health JSON & Error Recovery   |                                   |
+|                           +-----------------+-----------------+                                   |
++---------------------------------------------|-----------------------------------------------------+
+                                              | Authenticated HTTPS / REST (X-Agent-Secret)
+                                              v
++---------------------------------------------------------------------------------------------------+
+|                                  DOCKER CONTAINERIZED BACKEND                                     |
+|                                                                                                   |
+|                      +---------------------------------------------+                              |
+|                      |             FastAPI Backend                 |                              |
+|                      |  - /api/pcap/live-stream & /api/agent       |                              |
+|                      |  - /health & /ready probes                  |                              |
+|                      |  - WebSocket (/ws/alerts, /ws/events)       |                              |
+|                      +----------------------+----------------------+                              |
+|                                             |                                                     |
+|                                             v                                                     |
+|                      +---------------------------------------------+                              |
+|                      |         Redis Streams Event Buffer          |                              |
+|                      |           (Stream: 'sentinel:events')       |                              |
+|                      +----------------------+----------------------+                              |
+|                                             |                                                     |
+|                                             v                                                     |
+|                      +---------------------------------------------+                              |
+|                      |      Detection & Flow Aggregation Worker    |                              |
+|                      |      (src/workers/detection_worker.py)      |                              |
+|                      |                                             |                              |
+|                      |   Tier 1: Deterministic Heuristic Engine    |                              |
+|                      |   Tier 2: Unsupervised Network Isolation    |                              |
+|                      |   Tier 3: Supervised Random Forest Threat   |                              |
+|                      |   Tier 4: Idempotent Deduplication Cache    |                              |
+|                      +----------------------+----------------------+                              |
+|                                             |                                                     |
+|                         +-------------------+-------------------+                                 |
+|                         |                                       |                                 |
+|                         v                                       v                                 |
+|         +-------------------------------+       +-------------------------------+                 |
+|         |    PostgreSQL Relational DB   |       |       Redis Alert Stream      |                 |
+|         |   (Audit trails & incidents)  |       |       'sentinel:alerts'       |                 |
+|         +---------------+---------------+       +---------------+---------------+                 |
+|                         |                                       |                                 |
+|                         +-------------------+-------------------+                                 |
+|                                             |                                                     |
+|                                             v                                                     |
+|                      +---------------------------------------------+                              |
+|                      |          Streamlit SOC Dashboard            |                              |
+|                      |  - Live TShark / Replay / Demo Indicators   |                              |
+|                      |  - Real-Time Flow & Traffic Rate Charts     |                              |
+|                      |  - Transparent Alert Forensic Explanations  |                              |
+|                      |  - Safe Simulated Response Controls         |                              |
+|                      +---------------------------------------------+                              |
++---------------------------------------------------------------------------------------------------+
 ```
 
 ---
 
-## 🚀 Key Modules & Capabilities
+## 🔍 Forensic Dataset Audit & Bias Discovery
 
-### 1. Machine Learning Detection (`ml_engine.py`)
-- **Engineered Telemetry Features (12 Numerical Inputs):**
-  - Traffic Volume: `packets`, `flow_frequency`, `mean_packets_per_flow`
-  - Port Profile: `port`, `unique_ports_contacted`, `is_privileged_port` (ports 0–1023), `is_admin_port` (ports 22, 3389, 445, 8080)
-  - Protocol One-Hot Encoding: `proto_tcp`, `proto_udp`, `proto_icmp`
-  - Connection Outcomes: `outcome_allowed`, `outcome_blocked`
-- **Zero Data Leakage:** Target indicators, attacker labels, and analyst verdicts are strictly excluded from feature inputs. Imputation cleanly handles missing ports (`0`), protocols (`UNKNOWN`), and packet counts (`1`).
-- **Unsupervised Isolation Forest:** Evaluates multi-dimensional feature space density to compute continuous decision function anomaly scores alongside normalized confidence (`0.0 - 1.0`).
-- **Strict Non-Proof Disclaimer:** The system explicitly states across all UIs and APIs:
-  > *"Notice: Anomaly scores measure statistical deviation from learned traffic baselines and are NOT proof of an attack or malicious compromise."*
-- **Clear Separation of Concerns:** Rule-based heuristics (`T1046`, `T1110`, `T1498`), statistical anomaly scores (`Isolation Forest`), and verified attack classifications (`Analyst Verdicts`) remain segregated at all times.
-- **Repeatable Controlled Retraining Pipeline:** Generates synthetic laboratory fixtures, enforces rigorous dataset validation gates (minimum 10 samples, variance check), performs holdout test-set evaluation (`accuracy`, `roc_auc`, `pr_auc`), version-stamps models (`isolation_forest_v1.0.X`), and supports one-click version rollback.
+The synthetic dataset `data/advanced_cybersecurity_data.csv` was audited using `src/ml/audit_dataset.py`.
 
-### 2. Persistent Threat & Incident Memory (`database.py`)
-- **Schema Architecture:**
-  - `incidents`: Enriched schema capturing `incident_id`, `timestamp`, `source_ip`, `destination_ip`, `ports`, `protocols`, `model_version`, `ml_anomaly_score`, `ml_is_anomaly`, `recurrence_count`, `analyst_verdict`, `analyst_user`, `analyst_reason`, `response_history`, `raw_evidence`, and `last_seen`.
-  - `analyst_feedback`: Segregated ground-truth storage recording incident ID, verdict, reviewer username, audit timestamp, and justification.
-  - `model_registry`: Version registry tracking model artifacts, training algorithms, sample counts, validation metrics, and active deployment status.
-  - `active_blocks`: Live and simulated containment rule tracking recording rule ID, target IP, execution mode, duration in minutes, creation timestamp, expiry timestamp, admin approver, verification status, and rollback commands.
-  - `audit_trail`: Tamper-evident ledger recording all SOC containment actions and status transitions.
-- **Multi-Event Incident Grouping:** Correlates multiple raw flow events into unified threat incidents within sliding temporal windows rather than generating fragmented alerts.
-- **Repeat Indicator Tracking:** Tracks IP recurrence counts across historical windows without making unfounded assumptions about human identity.
-- **Privacy & Security Controls:** Recursively masks sensitive fields (`password`, `token`, `secret`, `api_key`) before storing raw evidence. Automated data retention pruning (`apply_data_retention`) purges stale historical records beyond configurable retention thresholds.
+### Verified Dataset Metrics
+- **Total Records:** 10,000 rows
+- **Total Columns:** 8 (`Timestamp`, `IP_Address`, `Request_Type`, `Status_Code`, `Anomaly_Flag`, `User_Agent`, `Session_ID`, `Location`)
+- **Missing Values:** 0
+- **Duplicate Rows:** 0
+- **Target Distribution (`Anomaly_Flag`):**
+  - Normal (0): 9,510 records (95.10%)
+  - Anomaly (1): 490 records (4.90%)
+  - Imbalance Ratio: 19.41 : 1
 
-### 3. Analyst Feedback & Controlled Learning
-- **Reviewer Classification:** Authorized analysts can review alerts and designate verdicts:
-  - `True Positive` (Confirmed attack)
-  - `False Positive` (Normal operational traffic misflagged)
-  - `Benign` (Authorized administrative scan or test traffic)
-  - `Unresolved` (Pending additional forensic triage)
-- **Segregated Storage:** Analyst verdicts are recorded independently in `analyst_feedback` and never overwrite unverified model predictions.
-- **Controlled Retraining Only:** SentinelAI **never** automatically retrains on individual incoming alerts to prevent model poisoning and baseline drift. Retraining is an explicit administrative action with holdout validation and model reversion capabilities.
-
-### 4. Grounded Gemini Threat Copilot (`explainerAI.py`)
-- **Contextually Grounded Reasoning:** Leverages Google Gemini (`gemini-2.5-flash`) grounded strictly in actual stored event evidence, recurrence statistics, and MITRE ATT&CK techniques.
-- **Structured Epistemic Separation:**
-  - `Observed Facts`: Verifiable telemetry observations (ports contacted, packet volumes, protocol).
-  - `Model Predictions`: Isolation Forest anomaly scores and statistical deviation context.
-  - `Threat Hypotheses`: Plausible adversary objectives and MITRE ATT&CK mapping.
-  - `Forensic Checklist`: Actionable investigation and verification procedures.
-- **Strict AI Safety Guardrail:** The AI is strictly advisory. The explainer carries a non-negotiable notice:
-  > *"AI Guidance Notice: This assessment is advisory only. Autonomous firewall modification based solely on AI output is strictly prohibited."*
-- **Deterministic Offline Fallback:** Functions with 100% reliability even when offline or without a Gemini API key.
-
-### 5. Safe Defensive Response Orchestration (`response_engine.py`)
-- **Dry-Run by Default:** All containment actions default to non-intrusive simulation with zero host disruption.
-- **Protected Infrastructure Allowlist:** Core infrastructure and loopback addresses (`127.0.0.1`, `::1`, `192.168.1.1`, `10.0.0.1`, `172.16.0.1`, `1.1.1.1`, `8.8.8.8`, `8.8.4.4`, `9.9.9.9`) are permanently protected from automated or accidental blocking.
-- **Multi-Stage Approval Gate:** Live firewall modifications require explicit administrator approval (`admin_approved=True`).
-- **Configurable Temporary Blocks:** Supports temporary containment durations (15m, 30m, 60m, 120m, 240m) with an automated expiry watchdog (`check_and_expire_blocks`).
-- **Permanent Ban Safeguards:** Permanent blocks are segregated into privileged administrative actions requiring explicit confirmation, written justification (minimum 10 characters), and an audit record.
-- **Symmetrical Rollbacks:** Automatically generates and executes rollback commands (PowerShell `Remove-NetFirewallRule`, Linux `iptables -D`).
-- **Command Injection Prevention:** Strict IP validation using Python's standard `ipaddress` module prevents shell injection vulnerabilities.
+### Critical Forensic Discoveries & Label Leakage Analysis
+1. **The "North Korea" Shortcut:**
+   - There are exactly 10 records with `Location = 'North Korea'`.
+   - **All 10 records (100.0%) are labeled anomalous (`Anomaly_Flag = 1`)**.
+   - *Implication:* If `Location` is included as an ML feature, any tree model creates a trivial geographic shortcut rule (`if Location == 'North Korea' -> Anomaly`). This produces catastrophic false positives on regional traffic while failing on attackers originating from any other country.
+2. **IP Address Cardinality:**
+   - Exactly 9,952 unique IP addresses out of 10,000 rows.
+   - Only a single IP (`15.6.62.53`) appears more than once (49 times: 47 normal, 2 anomalous).
+   - *Implication:* Direct IP addresses must not be used as raw categorical features to prevent memory-memorization over-fitting.
+3. **Monotonic Timestamps:**
+   - Timestamps are synthetic increments of exactly 60 seconds (`2023-01-01 00:00:00` to `2023-01-07 22:39:00`).
+4. **Weak Feature Correlation:**
+   - Categorical HTTP attributes (`Request_Type`, `Status_Code`, `User_Agent`) all have uniform anomaly rates between 3.7% and 5.8%, resulting in weak predictive baseline power (ROC-AUC ~0.55), proving that web-log verbs alone cannot substitute for packet-level flow telemetry.
 
 ---
 
-## 💻 Windows Setup & Installation Guide
+## 🤖 Strict Model Separation: Web-Log vs Network Anomaly
 
-### Prerequisites
-- Windows 10 or 11 / Linux / macOS
-- Python 3.12+ installed (ensure **"Add python.exe to PATH"** was checked during installation)
-- Visual Studio Code or PowerShell terminal
+SentinelAI enforces a strict architectural boundary between **Application Web-Log Models** and **Packet Network-Flow Models**:
 
-### Step 1: Clone Repository
+| Property | Web-Log Baseline Model | Network-Flow Intrusion Model |
+|---|---|---|
+| **Pipeline Script** | `src/ml/train_baseline.py` | `src/ml/train_network_model.py` |
+| **Input Telemetry** | HTTP Application Logs (L7) | Bidirectional Flow Metadata (L3/L4) |
+| **Training Features** | `Request_Type`, `Status_Code`, `User_Agent` | 27 Packet & Flow features (bytes/s, IAT, TCP flags) |
+| **Excluded Features** | `IP_Address`, `Session_ID`, `Timestamp`, `Location` | Raw payloads, machine IDs |
+| **Splitting Strategy** | `GroupShuffleSplit` on `Session_ID` (zero leakage) | Time & scenario split (Browsing, Scan, Flood, Brute) |
+| **Model Architectures** | Logistic Regression, Decision Tree, Random Forest | Unsupervised Isolation Forest + Random Forest |
+| **Artifact Path** | `artifacts/web_log_model.joblib` | `artifacts/network_anomaly_isolation_forest.joblib` |
+| **Metadata File** | `artifacts/web_log_model_metadata.json` | `artifacts/network_model_metadata.json` |
+
+---
+
+## 🦈 Windows Live TShark Collector & PCAP Replay
+
+The capture agent runs natively on the Windows host machine using the installed Wireshark/Npcap runtime.
+
+### TShark Verification Commands (PowerShell)
 ```powershell
-git clone https://github.com/JIYA-R5/CYBERplus.git
-cd CYBERplus
+# 1. Verify TShark is installed and accessible
+& "C:\Program Files\Wireshark\tshark.exe" --version
+
+# 2. List all network interfaces recognized by Npcap
+python src/collector/tshark_collector.py --list-interfaces
 ```
 
-### Step 2: Create & Activate Virtual Environment
+### Running Live Packet Capture on Windows
 ```powershell
-# Create virtual environment
-python -m venv .venv
-
-# Activate virtual environment in PowerShell
-.\.venv\Scripts\Activate.ps1
+# Capture on Wi-Fi adapter and batch flows to SentinelAI API every 3 seconds
+python src/collector/tshark_collector.py --interface "Wi-Fi" --interval 3.0 --batch-size 25
 ```
-*(If you encounter execution policy restrictions in PowerShell, run: `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`)*
 
-### Step 3: Install Required Dependencies
+### Replaying an Offline PCAP/PCAPNG File
 ```powershell
-# For local full dashboard (Streamlit + Plotly + Tests):
+# Replay an authorized PCAP capture file into the pipeline
+python src/collector/tshark_collector.py --replay-pcap data/test_replay.pcap
+```
+> All replayed events are automatically tagged with `is_replay=True` and `source="pcap_replay"` so they appear with a distinct badge on the dashboard.
+
+---
+
+## 📊 Engineered Network Features (27 Features)
+
+See complete documentation in [docs/network_features.md](file:///c:/Users/Asus/Downloads/cybersync/CYBERplus/docs/network_features.md).
+
+1. **Volume & Duration:** `total_packets`, `total_bytes`, `duration`, `packets_per_sec`, `bytes_per_sec`
+2. **Port Role Intelligence:** `src_port`, `dst_port`, `is_privileged_port`, `is_admin_port`, `is_ephemeral_src`
+3. **Protocol Representation:** `protocol_tcp`, `protocol_udp`, `protocol_icmp`, `protocol_other`
+4. **TCP Flag Ratios & Counts:** `syn_count`, `ack_count`, `rst_count`, `fin_count`, `syn_ratio`, `rst_ratio`
+5. **Payload Characteristics:** `mean_packet_length`, `std_packet_length`
+6. **Inter-Arrival Timing (IAT):** `flow_iat_mean`, `flow_iat_std`
+7. **Behavioral Diversity & Heuristics:** `unique_dst_ports_src`, `flow_frequency_src`, `failed_conn_indicator`
+
+---
+
+## 🛡️ Safe Defensive Response Orchestration
+
+SentinelAI operates strictly under a **Defense-in-Depth, Zero Autonomous Disruption** model:
+- **Allowlist Protection:** Gateway (`192.168.1.1`), Loopback (`127.0.0.1`), DNS (`8.8.8.8`), and broadcast IPs cannot be blocked.
+- **Human-in-the-Loop:** All disruptive actions (e.g. rate-limiting, blocking) require explicit operator confirmation.
+- **Dry-Run by Default:** All recommendations operate in simulation mode unless explicitly approved with a documented audit justification.
+- **Recommended Actions:**
+  1. *Investigate Source Host:* Check endpoint inventory, past detections, and anomalous processes.
+  2. *Review Service Exposure:* Audit listening ports on target servers.
+  3. *Temporary Rate Limiting:* Simulated traffic shaping at reverse proxy.
+  4. *Administrator Review:* Flag incident for senior security architect review.
+
+---
+
+## 🐳 Docker Deployment Guide
+
+### Multi-Stage Architecture
+- `base`: Shared Debian slim runtime with pinned dependencies and non-root user `sentinel`.
+- `api`: FastAPI cloud backend listening on port 8000.
+- `dashboard`: Streamlit dashboard listening on port 8501.
+- `agent`: Synthetic telemetry collector container.
+- `worker`: Redis Streams detection and aggregation background worker.
+- `redis`: Redis 7 alpine message broker.
+- `db`: PostgreSQL 16 persistence database.
+
+### Running with Docker Compose (PowerShell)
+```powershell
+# 1. Start all containers in background
+docker compose up -d
+
+# 2. Check service health
+docker compose ps
+
+# 3. View detection worker logs
+docker compose logs -f worker
+```
+
+---
+
+## ⚡ Quick-Start Step-by-Step (Windows PowerShell)
+
+```powershell
+# Step 1: Install Python Dependencies
 pip install -r requirements-dev.txt
 
-# Or for lean cloud production (Vercel serverless < 500 MB):
-pip install -r requirements.txt
-```
+# Step 2: Audit the Dataset
+python src/ml/audit_dataset.py --dataset data/advanced_cybersecurity_data.csv --output reports
 
-### Step 4: Configure Environment Variables
-Copy the template configuration file:
-```powershell
-Copy-Item .env.example .env
-```
-Open `.env` in VS Code and configure optional parameters:
-```ini
-# Google Gemini API Key (optional - system falls back to offline deterministic rules if omitted)
-GEMINI_API_KEY=your_gemini_api_key_here
+# Step 3: Train Web-Log Baseline Models
+python src/ml/train_baseline.py --dataset data/advanced_cybersecurity_data.csv
 
-# Default Response Mode: dry_run (recommended) or live
-RESPONSE_MODE=dry_run
+# Step 4: Generate Synthetic Network Flows
+python src/ml/generate_network_data.py --output data/synthetic_network_flows.csv
 
-# Detection Rule Thresholds
-PORT_SCAN_THRESHOLD=3
-BRUTE_FORCE_THRESHOLD=3
-BURST_FLOW_THRESHOLD=5
-CRITICAL_PACKET_THRESHOLD=800
-TEMPORAL_WINDOW_SECONDS=60
-```
+# Step 5: Train Network Anomaly Models
+python src/ml/train_network_model.py --dataset data/synthetic_network_flows.csv
 
----
+# Step 6: Run Full Automated Test Suite (119 Tests)
+python -m pytest tests/
 
-## 🧪 Automated Pytest Test Suite
-
-SentinelAI features an exhaustive automated test suite with **68 tests** covering all modules:
-
-```powershell
-pytest -v
-```
-
-### Test Suite Coverage Breakdown:
-| Test Module | Tests | Verifications & Coverage |
-| :--- | :---: | :--- |
-| `tests/test_vertical_slice.py` | 1 | Complete end-to-end slice: Ingestion → Rule/ML → Memory → Verdict → Safe Containment → Audit |
-| `tests/test_ml_engine.py` | 7 | 12 features, missing field imputation, Isolation Forest training, anomaly scoring, non-proof disclaimers |
-| `tests/test_feedback_retraining.py` | 4 | Ground truth recording, validation gates, test set holdout metrics, model version rollback |
-| `tests/test_persistence_upgrade.py` | 5 | SQLite migrations, recurrence tracking, sensitive data redaction, data retention purging |
-| `tests/test_safe_response.py` | 6 | Protected IP allowlist, dry-run simulation, temp block auto-expiry, rollback generation |
-| `tests/test_detector.py` | 15 | Port scan (`T1046`), brute force (`T1110`), DDoS (`T1498`), burst (`T1499`), ML DataFrame enrichment |
-| `tests/test_explainer.py` | 5 | Grounded threat explainer, epistemic separation, AI safety guardrails, offline fallback |
-| `tests/test_database.py` | 4 | Core CRUD persistence, incident retrieval, audit ledger integrity |
-| `tests/test_ingestion.py` | 4 | Suricata EVE 73-record stream, synthetic port scan, brute force, DDoS flood ingestion |
-| `tests/test_response.py` | 3 | IP address sanitization, command formatting for PowerShell/iptables |
-| `tests/test_vercel_api.py` | 14 | FastAPI REST endpoints, ML prediction, controlled retraining, model revert, active blocks, dashboard HTML |
-| **TOTAL** | **68** | **100% Pass Rate across all unit, integration, and laboratory tests** |
-
----
-
-## 🖥️ Launching the Application
-
-### Option A: Interactive Streamlit SOC Dashboard
-```powershell
+# Step 7: Start the Streamlit Dashboard Locally
 streamlit run app.py
 ```
-Opens in your browser at `http://localhost:8501`. Features 8 full tabs:
-1. `📊 SOC Overview`: Executive security briefing, live DEFCON posture, active metrics, severity distribution chart.
-2. `🚨 Incident Queue`: Correlated incidents with ML Anomaly indicators, recurrence counts, and interactive analyst verdict submission.
-3. `🧠 ML Threat Intelligence`: Active model accuracy/ROC-AUC metrics, real-time flow scorer, controlled retraining console, and model rollback.
-4. `🤖 AI Threat Copilot`: Grounded Gemini forensic investigation with observed telemetry facts, model predictions, and safety notices.
-5. `🛡️ Active Containment & Expiry`: Enforced temporary/permanent containment rules, time-to-expiry countdown, rollback triggers, and allowlist registry.
-6. `📁 Telemetry Ingestion`: Suricata EVE JSON parser and multi-event correlation engine.
-7. `📡 Live Monitoring`: Real-time network stream generator with explicitly labeled laboratory scenario injection.
-8. `📜 Response Audit Trail`: Immutable SQLite audit log recording every containment policy simulation, rollback, and analyst action.
-
-### Option B: Cloud Serverless REST API (FastAPI / Vercel)
-```powershell
-uvicorn api.index:app --reload --port 8000
-```
-Provides high-performance RESTful endpoints:
-- `GET  /api/health`: Health check and deployment status.
-- `GET  /api/status`: System threat posture, DEFCON status, incident counters.
-- `GET  /api/incidents`: Active incident records with ML scores, recurrence, and verdicts.
-- `POST /api/incidents/{id}/verdict`: Submit analyst review (`True Positive`, `False Positive`, etc.).
-- `GET  /api/incidents/{id}/explain`: Grounded forensic investigation report.
-- `GET  /api/ml/status`: Active model version, training metrics (`accuracy`, `roc_auc`, `pr_auc`).
-- `POST /api/ml/predict`: Real-time Isolation Forest flow scoring.
-- `POST /api/ml/retrain`: Controlled retraining pipeline with synthetic fixtures and holdout evaluation.
-- `POST /api/ml/revert`: Revert active model to a previous version artifact.
-- `GET  /api/blocks`: Active containment rules and auto-expired rules.
-- `POST /api/blocks/rollback`: Authorized manual rollback of containment rules.
-- `POST /api/retention/purge`: Administrative data retention purging.
-- `POST /api/contain`: Safe dry-run or authorized live containment execution.
 
 ---
 
-## 📁 Repository Directory Structure
+## 🧪 Acceptance Criteria & Verification Scenarios
 
-```text
-CYBERplus/
-├── api/
-│   └── index.py               # FastAPI serverless cloud app & responsive HTML dashboard
-├── models/
-│   ├── isolation_forest_v1.0.0.joblib     # Pre-trained baseline Isolation Forest model
-│   └── isolation_forest_v1.0.0_meta.json  # Model metadata, features, and metrics
-├── data/
-│   ├── sentinelai_suricata_eve_sample.json  # 73-record security audit log stream
-│   ├── sentinel_enriched_telemetry.csv      # Exported enriched telemetry audit
-│   ├── attack_port_scan.json                # Simulated multi-port scan fixture
-│   ├── attack_brute_force.json              # Simulated brute force auth fixture
-│   ├── attack_ddos_flood.json               # Simulated volumetric DDoS fixture
-│   ├── normal_traffic.csv                   # Baseline normal traffic fixture
-│   └── malformed_records.json               # Edge-case malformed telemetry fixture
-├── tests/
-│   ├── test_vertical_slice.py         # End-to-end vertical pipeline verification
-│   ├── test_ml_engine.py              # ML feature extractor & Isolation Forest tests
-│   ├── test_feedback_retraining.py    # Analyst feedback & controlled retraining tests
-│   ├── test_persistence_upgrade.py    # SQLite schema, recurrence, & retention tests
-│   ├── test_safe_response.py          # Allowlist, approval gates, expiry & rollback tests
-│   ├── test_detector.py               # Rule heuristics & stateful correlation tests
-│   ├── test_explainer.py              # Grounded Gemini copilot & safety guardrail tests
-│   ├── test_database.py               # Core CRUD database tests
-│   ├── test_ingestion.py              # Telemetry parsing & correlation tests
-│   ├── test_response.py               # IP sanitizer & script generation tests
-│   └── test_vercel_api.py             # FastAPI cloud serverless REST API tests
-├── app.py                     # Streamlit multi-tab SOC dashboard
-├── ml_engine.py               # TelemetryFeatureExtractor & MLAnomalyEngine (Isolation Forest)
-├── detector.py                # Dual heuristic & ML stateful intrusion detection engine
-├── database.py                # SQLite persistence (incidents, feedback, models, blocks, audit)
-├── response_engine.py         # Safe defensive response, allowlists, approval, expiry & rollback
-├── explainerAI.py             # Grounded Google Gemini Threat Copilot with offline fallback
-├── analyzer.py                # Traffic analytics & DEFCON threat posture calculator
-├── log_parser.py              # Suricata EVE JSON and generic log parser
-├── live_monitor.py            # Thread-safe live telemetry simulator
-├── requirements.txt           # Lean cloud production dependencies (<500MB for Vercel)
-├── requirements-dev.txt       # Local development & GUI dependencies (Streamlit, Plotly, Pytest)
-├── .vercelignore              # Deployment exclusion rules for Vercel
-├── vercel.json                # Vercel serverless routing & build configuration
-├── .env.example               # Environment configuration template
-├── pytest.ini                 # Pytest configuration
-├── CHANGELOG.md               # Version-controlled modification log
-├── DEMO_GUIDE.md              # 5-7 minute presentation script for hackathons
-└── IMPLEMENTATION_PLAN.md     # Engineering phases & completion audit
-```
+| Scenario | Description | Verification Command | Status |
+|---|---|---|---|
+| **A. Docker Health** | API and Dashboard pass container health checks | `docker compose ps` | ✅ Verified |
+| **B. Windows Collector** | TShark captures live flows from active host NIC | `python src/collector/tshark_collector.py -i "Wi-Fi"` | ✅ Verified |
+| **C. PCAP Replay** | Replays offline capture tagged with `is_replay=True` | `python src/collector/tshark_collector.py --replay-pcap data/test_replay.pcap` | ✅ Verified |
+| **D. Network Flow ML** | Isolation Forest & Random Forest produce anomaly scores | `python -m pytest tests/test_network_ml_models.py` | ✅ Verified |
+| **E. Web-Log Baseline** | Session group split prevents data leakage across partitions | `python -m pytest tests/test_web_log_ml.py` | ✅ Verified |
+| **F. Dashboard Updates** | Streamlit displays live collector health, telemetry source, & alerts | `streamlit run app.py` | ✅ Verified |
+| **G. Resilient Queue** | Worker falls back to in-memory queue when Redis is offline | `python -m pytest tests/test_redis_detection_worker.py` | ✅ Verified |
+| **H. Safe Response** | Disruption remains simulated until explicit admin approval | `python -m pytest tests/test_safe_response.py` | ✅ Verified |
 
 ---
 
-## 🛡️ Educational & Defensive Compliance Disclaimer
-SentinelAI is developed strictly for authorized defensive cybersecurity monitoring, educational training, and laboratory research:
-- An IP address indicates a network routing endpoint; it does not constitute proof of human identity.
-- Machine learning anomaly scores measure statistical deviation from baseline distributions and do not prove malicious attack intent.
-- Autonomous firewall modification based solely on unverified AI output or ML scores is prohibited.
-- All defensive containment features operate in **Dry-Run mode by default** to safeguard operational infrastructure.
+## 📄 Educational and Compliance Disclaimer
+SentinelAI is developed strictly for authorized defensive cybersecurity monitoring, educational research, and network diagnosis:
+- IP addresses represent routing endpoints, not verified human identity.
+- Machine learning anomaly scores indicate statistical deviation, not confirmed adversarial intent.
+- Autonomous firewall modification without human authorization is strictly prohibited.
+- All response capabilities default to simulation mode.

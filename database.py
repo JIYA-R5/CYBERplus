@@ -53,10 +53,24 @@ class DatabaseManager:
 
     def __init__(self, db_path: Optional[str] = None):
         if db_path is None:
-            if os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):
+            if os.environ.get("SENTINEL_DB_PATH"):
+                self.db_path = os.environ.get("SENTINEL_DB_PATH")
+                # If target db doesn't exist yet but root sentinel.db exists, seed it
+                base_dir = os.path.dirname(os.path.abspath(__file__))
+                orig_db = os.path.join(base_dir, "sentinel.db")
+                if os.path.exists(orig_db) and not os.path.exists(self.db_path) and os.path.abspath(orig_db) != os.path.abspath(self.db_path):
+                    import shutil
+                    try:
+                        parent_target = os.path.dirname(os.path.abspath(self.db_path))
+                        if parent_target:
+                            os.makedirs(parent_target, exist_ok=True)
+                        shutil.copy2(orig_db, self.db_path)
+                    except Exception:
+                        pass
+            elif os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):
                 tmp_dir = "/tmp"
                 self.db_path = os.path.join(tmp_dir, "sentinel.db")
-                base_dir = os.path.dirname(__file__)
+                base_dir = os.path.dirname(os.path.abspath(__file__))
                 orig_db = os.path.join(base_dir, "sentinel.db")
                 if os.path.exists(orig_db) and not os.path.exists(self.db_path):
                     import shutil
@@ -65,15 +79,102 @@ class DatabaseManager:
                     except Exception:
                         pass
             else:
-                base_dir = os.path.dirname(__file__)
+                base_dir = os.path.dirname(os.path.abspath(__file__))
                 self.db_path = os.path.join(base_dir, "sentinel.db")
         else:
             self.db_path = db_path
+
+        # Ensure parent directory exists
+        parent_dir = os.path.dirname(os.path.abspath(self.db_path))
+        if parent_dir and not os.path.exists(parent_dir):
+            os.makedirs(parent_dir, exist_ok=True)
+
         self._init_db()
+        self.pg_url = os.environ.get("POSTGRES_URL") or os.environ.get("DATABASE_URL")
+        self.pg_conn = None
+        self._init_postgres()
+
+    def _init_postgres(self):
+        """Initializes PostgreSQL connection if POSTGRES_URL or DATABASE_URL is configured."""
+        if not self.pg_url or not (self.pg_url.startswith("postgres://") or self.pg_url.startswith("postgresql://")):
+            return
+        try:
+            import psycopg2
+            self.pg_conn = psycopg2.connect(self.pg_url, connect_timeout=5)
+            self.pg_conn.autocommit = True
+            with self.pg_conn.cursor() as cur:
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS telemetry_events (
+                    event_id VARCHAR(64) PRIMARY KEY,
+                    timestamp VARCHAR(64) NOT NULL,
+                    source_ip VARCHAR(64) NOT NULL,
+                    destination_ip VARCHAR(64),
+                    port INTEGER,
+                    packets INTEGER DEFAULT 0,
+                    activity VARCHAR(128),
+                    risk VARCHAR(64),
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE TABLE IF NOT EXISTS incidents (
+                    incident_id VARCHAR(64) PRIMARY KEY,
+                    timestamp VARCHAR(64) NOT NULL,
+                    category VARCHAR(128) NOT NULL,
+                    source_ip VARCHAR(64) NOT NULL,
+                    destination_ip VARCHAR(64),
+                    destination_ports TEXT,
+                    event_count INTEGER DEFAULT 1,
+                    total_packets INTEGER DEFAULT 0,
+                    severity VARCHAR(64) NOT NULL,
+                    confidence REAL NOT NULL,
+                    rule_id VARCHAR(64),
+                    mitre_id VARCHAR(64),
+                    evidence TEXT,
+                    recommended_action TEXT,
+                    detection_method TEXT,
+                    status VARCHAR(64) DEFAULT 'Open',
+                    last_seen VARCHAR(64),
+                    ml_anomaly_score REAL DEFAULT 0.0,
+                    ml_is_anomaly INTEGER DEFAULT 0,
+                    recurrence_count INTEGER DEFAULT 1,
+                    analyst_verdict VARCHAR(64) DEFAULT 'Unreviewed',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                """)
+        except Exception:
+            self.pg_conn = None
+
+    def get_postgres_status(self) -> Dict[str, Any]:
+        """Check PostgreSQL connection status and metrics."""
+        if not self.pg_url:
+            return {"configured": False, "connected": False, "message": "POSTGRES_URL / DATABASE_URL not set"}
+        if self.pg_conn is None:
+            self._init_postgres()
+        if self.pg_conn:
+            try:
+                with self.pg_conn.cursor() as cur:
+                    cur.execute("SELECT COUNT(*) FROM telemetry_events;")
+                    evt_count = cur.fetchone()[0]
+                    cur.execute("SELECT COUNT(*) FROM incidents;")
+                    inc_count = cur.fetchone()[0]
+                return {
+                    "configured": True,
+                    "connected": True,
+                    "events_count": evt_count,
+                    "incidents_count": inc_count
+                }
+            except Exception as e:
+                self.pg_conn = None
+                return {"configured": True, "connected": False, "error": str(e)}
+        return {"configured": True, "connected": False, "message": "Failed to connect to PostgreSQL"}
 
     def _get_connection(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path, timeout=30.0)
         conn.row_factory = sqlite3.Row
+        try:
+            conn.execute("PRAGMA journal_mode=WAL;")
+            conn.execute("PRAGMA busy_timeout=5000;")
+        except Exception:
+            pass
         return conn
 
     def _init_db(self):
@@ -120,6 +221,8 @@ class DatabaseManager:
                 ("analyst_timestamp", "TEXT"),
                 ("response_history", "TEXT"),
                 ("raw_evidence", "TEXT"),
+                ("is_replay", "INTEGER DEFAULT 0"),
+                ("telemetry_source", "TEXT DEFAULT 'live'"),
             ]
 
             for col_name, col_type in new_columns:
@@ -203,6 +306,45 @@ class DatabaseManager:
             )
             """)
 
+            # 7. PCAP Captures metadata table
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS pcap_captures (
+                capture_id TEXT PRIMARY KEY,
+                filename TEXT NOT NULL,
+                file_size INTEGER NOT NULL,
+                uploaded_at TEXT NOT NULL,
+                format TEXT NOT NULL,
+                packet_count INTEGER DEFAULT 0,
+                flow_count INTEGER DEFAULT 0,
+                status TEXT DEFAULT 'Completed',
+                metadata TEXT
+            )
+            """)
+
+            # 8. PCAP Bidirectional Flow Records table
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS pcap_flows (
+                flow_id TEXT PRIMARY KEY,
+                capture_id TEXT,
+                src_ip TEXT NOT NULL,
+                dst_ip TEXT NOT NULL,
+                src_port INTEGER,
+                dst_port INTEGER,
+                protocol TEXT,
+                duration REAL,
+                total_packets INTEGER,
+                total_bytes INTEGER,
+                forward_packets INTEGER,
+                backward_packets INTEGER,
+                tcp_flags TEXT,
+                start_time REAL,
+                end_time REAL,
+                supervised_label TEXT,
+                ml_anomaly_score REAL,
+                FOREIGN KEY (capture_id) REFERENCES pcap_captures(capture_id)
+            )
+            """)
+
             # Indexes for performant filtering
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_incident_status ON incidents(status)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_incident_severity ON incidents(severity)")
@@ -210,6 +352,8 @@ class DatabaseManager:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_time ON audit_logs(timestamp)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_feedback_inc ON analyst_feedback(incident_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_blocks_status ON active_blocks(status)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_flows_capture ON pcap_flows(capture_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_flows_src ON pcap_flows(src_ip)")
             conn.commit()
 
     def get_ip_recurrence_count(self, source_ip: str) -> int:
@@ -262,8 +406,8 @@ class DatabaseManager:
                 detection_method, status, last_seen, protocols, model_version,
                 ml_anomaly_score, ml_is_anomaly, recurrence_count,
                 analyst_verdict, analyst_user, analyst_reason, analyst_timestamp,
-                response_history, raw_evidence
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                response_history, raw_evidence, is_replay, telemetry_source
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 inc_id,
                 first_seen,
@@ -292,9 +436,62 @@ class DatabaseManager:
                 incident_data.get("analyst_reason", ""),
                 incident_data.get("analyst_timestamp", ""),
                 resp_hist_json,
-                raw_ev_safe
+                raw_ev_safe,
+                1 if incident_data.get("is_replay") else 0,
+                str(incident_data.get("telemetry_source") or ("pcap_replay" if incident_data.get("is_replay") else "live"))
             ))
             conn.commit()
+
+        # Publish alert to Redis Stream
+        try:
+            from stream_engine import get_stream_publisher
+            get_stream_publisher().publish_alert({
+                "incident_id": inc_id,
+                "timestamp": first_seen,
+                "category": incident_data.get("category", "Unknown Threat"),
+                "source_ip": src_ip,
+                "destination_ip": incident_data.get("destination_ip", "Internal Subnet"),
+                "severity": incident_data.get("severity", "Medium"),
+                "confidence": float(incident_data.get("confidence", 0.5)),
+                "rule_id": incident_data.get("rule_id", "N/A"),
+                "detection_method": incident_data.get("detection_method", "Rule-based heuristic")
+            })
+        except Exception:
+            pass
+
+        # Persist alert to PostgreSQL if configured
+        if self.pg_conn:
+            try:
+                with self.pg_conn.cursor() as cur:
+                    cur.execute("""
+                    INSERT INTO incidents (
+                        incident_id, timestamp, category, source_ip, destination_ip,
+                        destination_ports, event_count, total_packets, severity,
+                        confidence, rule_id, mitre_id, evidence, recommended_action,
+                        detection_method, status, last_seen, ml_anomaly_score, ml_is_anomaly,
+                        recurrence_count, analyst_verdict
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (incident_id) DO UPDATE SET
+                        last_seen = EXCLUDED.last_seen,
+                        event_count = EXCLUDED.event_count,
+                        total_packets = EXCLUDED.total_packets,
+                        status = EXCLUDED.status,
+                        analyst_verdict = EXCLUDED.analyst_verdict;
+                    """, (
+                        inc_id, first_seen, incident_data.get("category", "Unknown Threat"),
+                        src_ip, incident_data.get("destination_ip", "Internal Subnet"),
+                        ports_json, int(incident_data.get("event_count", 1)),
+                        int(incident_data.get("total_packets", 0)), incident_data.get("severity", "Medium"),
+                        float(incident_data.get("confidence", 0.5)), incident_data.get("rule_id", "N/A"),
+                        incident_data.get("mitre_id", "N/A"), incident_data.get("evidence", ""),
+                        incident_data.get("recommended_action", ""), incident_data.get("detection_method", "Rule-based heuristic"),
+                        incident_data.get("status", "Open"), last_seen,
+                        float(incident_data.get("ml_anomaly_score", 0.0)), int(bool(incident_data.get("ml_is_anomaly", False))),
+                        int(recurrence), incident_data.get("analyst_verdict", "Unreviewed")
+                    ))
+            except Exception:
+                pass
+
         return inc_id
 
     def get_incidents(
@@ -732,6 +929,182 @@ class DatabaseManager:
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM audit_logs ORDER BY timestamp DESC LIMIT ?", (limit,))
+            return [dict(r) for r in cursor.fetchall()]
+
+    def save_pcap_capture(self, capture_data: Dict[str, Any]) -> str:
+        """Stores PCAP/PCAPNG capture metadata in database."""
+        cap_id = capture_data.get("capture_id") or f"CAP-{uuid.uuid4().hex[:8].upper()}"
+        ts = capture_data.get("uploaded_at") or datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+            INSERT OR REPLACE INTO pcap_captures (
+                capture_id, filename, file_size, uploaded_at, format,
+                packet_count, flow_count, status, metadata
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                cap_id,
+                capture_data.get("filename", "unknown.pcap"),
+                int(capture_data.get("file_size", 0)),
+                ts,
+                capture_data.get("format", "pcap"),
+                int(capture_data.get("packet_count", 0)),
+                int(capture_data.get("flow_count", 0)),
+                capture_data.get("status", "Completed"),
+                json.dumps(capture_data.get("metadata", {}))
+            ))
+            conn.commit()
+        return cap_id
+
+    def get_pcap_captures(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """List uploaded PCAP captures."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM pcap_captures ORDER BY uploaded_at DESC LIMIT ?", (limit,))
+            rows = cursor.fetchall()
+            results = []
+            for r in rows:
+                item = dict(r)
+                try:
+                    item["metadata"] = json.loads(item["metadata"])
+                except Exception:
+                    pass
+                results.append(item)
+            return results
+
+    def get_pcap_capture_by_id(self, capture_id: str) -> Optional[Dict[str, Any]]:
+        """Get PCAP capture by ID."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM pcap_captures WHERE capture_id = ?", (capture_id,))
+            row = cursor.fetchone()
+            if not row:
+                return None
+            item = dict(row)
+            try:
+                item["metadata"] = json.loads(item["metadata"])
+            except Exception:
+                pass
+            return item
+
+    def save_pcap_flows(self, capture_id: str, flows: List[Dict[str, Any]]):
+        """Batch insert extracted bidirectional flow records."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            for f in flows:
+                f_id = f.get("flow_id") or f"FLOW-{uuid.uuid4().hex[:8].upper()}"
+                flags_str = json.dumps(f.get("tcp_flags_seen", {})) if isinstance(f.get("tcp_flags_seen"), dict) else str(f.get("tcp_flags_seen", ""))
+                cursor.execute("""
+                INSERT OR REPLACE INTO pcap_flows (
+                    flow_id, capture_id, src_ip, dst_ip, src_port, dst_port,
+                    protocol, duration, total_packets, total_bytes, forward_packets,
+                    backward_packets, tcp_flags, start_time, end_time,
+                    supervised_label, ml_anomaly_score
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    f_id,
+                    capture_id,
+                    f.get("src_ip", "0.0.0.0"),
+                    f.get("dst_ip", "0.0.0.0"),
+                    int(f.get("src_port", 0)),
+                    int(f.get("dst_port", 0)),
+                    f.get("protocol", "TCP"),
+                    float(f.get("duration", 0.0)),
+                    int(f.get("total_packets", 0)),
+                    int(f.get("total_bytes", 0)),
+                    int(f.get("forward_packets", 0)),
+                    int(f.get("backward_packets", 0)),
+                    flags_str,
+                    float(f.get("start_time", 0.0)),
+                    float(f.get("end_time", 0.0)),
+                    f.get("supervised_label", "Normal Traffic"),
+                    float(f.get("ml_anomaly_score", 0.0))
+                ))
+            conn.commit()
+
+    def get_pcap_flows(self, capture_id: Optional[str] = None, limit: int = 100) -> List[Dict[str, Any]]:
+        """Retrieve stored flow records."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            if capture_id:
+                cursor.execute("SELECT * FROM pcap_flows WHERE capture_id = ? LIMIT ?", (capture_id, limit))
+            else:
+                cursor.execute("SELECT * FROM pcap_flows ORDER BY start_time DESC LIMIT ?", (limit,))
+            rows = cursor.fetchall()
+            results = []
+            for r in rows:
+                item = dict(r)
+                try:
+                    item["tcp_flags"] = json.loads(item["tcp_flags"])
+                except Exception:
+                    pass
+                results.append(item)
+            return results
+
+    def log_telemetry_event(self, event_data: Dict[str, Any]) -> str:
+        """Insert a raw telemetry event and stream to Redis."""
+        ev_id = event_data.get("event_id") or f"EVT-{uuid.uuid4().hex[:8].upper()}"
+        ts = event_data.get("timestamp") or datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+            INSERT OR REPLACE INTO telemetry_events (
+                event_id, timestamp, source_ip, destination_ip, port, packets, activity, risk
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                ev_id,
+                ts,
+                event_data.get("source_ip", "0.0.0.0"),
+                event_data.get("destination_ip", "10.0.0.1"),
+                int(event_data.get("port", event_data.get("destination_port", 80))),
+                int(event_data.get("packets", 1)),
+                event_data.get("activity", "Normal Traffic"),
+                event_data.get("risk", "Low")
+            ))
+            conn.commit()
+
+        # Stream event to Redis
+        try:
+            from stream_engine import get_stream_publisher
+            get_stream_publisher().publish_event({
+                "event_id": ev_id,
+                "timestamp": ts,
+                "source_ip": event_data.get("source_ip", "0.0.0.0"),
+                "destination_ip": event_data.get("destination_ip", "10.0.0.1"),
+                "port": int(event_data.get("port", event_data.get("destination_port", 80))),
+                "packets": int(event_data.get("packets", 1)),
+                "activity": event_data.get("activity", "Normal Traffic")
+            })
+        except Exception:
+            pass
+
+        # Persist event to PostgreSQL if configured
+        if self.pg_conn:
+            try:
+                with self.pg_conn.cursor() as cur:
+                    cur.execute("""
+                    INSERT INTO telemetry_events (
+                        event_id, timestamp, source_ip, destination_ip, port, packets, activity, risk
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (event_id) DO NOTHING;
+                    """, (
+                        ev_id, ts, event_data.get("source_ip", "0.0.0.0"),
+                        event_data.get("destination_ip", "10.0.0.1"),
+                        int(event_data.get("port", event_data.get("destination_port", 80))),
+                        int(event_data.get("packets", 1)),
+                        event_data.get("activity", "Normal Traffic"),
+                        event_data.get("risk", "Low")
+                    ))
+            except Exception:
+                pass
+
+        return ev_id
+
+    def get_telemetry_events(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """Query recent raw telemetry events."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM telemetry_events ORDER BY timestamp DESC LIMIT ?", (limit,))
             return [dict(r) for r in cursor.fetchall()]
 
     def reset_demo_data(self, sample_csv_path: Optional[str] = None):

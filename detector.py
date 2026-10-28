@@ -42,6 +42,8 @@ class Incident:
     model_version: str = "v1.0.0"
     ml_anomaly_score: float = 0.0
     ml_is_anomaly: bool = False
+    supervised_class: Optional[str] = None
+    supervised_confidence: float = 0.0
     recurrence_count: int = 1
     analyst_verdict: str = "Unreviewed"
     analyst_user: Optional[str] = None
@@ -284,9 +286,9 @@ class ThreatDetector:
 
     def evaluate_flow(
         self,
-        packets: int,
-        activity: str,
-        source_ip: str,
+        packets: Union[int, Dict[str, Any]] = 0,
+        activity: str = "Normal Traffic",
+        source_ip: str = "0.0.0.0",
         destination_port: Optional[int] = None,
         destination_ip: Optional[str] = None,
         raw_risk: Optional[str] = None
@@ -295,10 +297,22 @@ class ThreatDetector:
         Evaluate an individual network traffic flow for anomalies.
         Provides robust fallbacks for missing or malformed inputs and separates
         deterministic rule detections from continuous ML anomaly scores.
+        Supports both positional arguments and a flow record dictionary.
         """
+        if isinstance(packets, dict):
+            flow = packets
+            raw_pkts = flow.get("total_packets", flow.get("packets", 0))
+            activity = flow.get("activity", flow.get("Activity", "Normal Traffic"))
+            source_ip = flow.get("src_ip", flow.get("source_ip", flow.get("Source IP", "0.0.0.0")))
+            destination_port = flow.get("dst_port", flow.get("port", flow.get("destination_port", None)))
+            destination_ip = flow.get("dst_ip", flow.get("destination_ip", flow.get("Destination IP", None)))
+            raw_risk = flow.get("risk", flow.get("Risk", None))
+        else:
+            raw_pkts = packets
+
         safe_ip = sanitize_ip(source_ip)
         try:
-            safe_packets = max(0, int(float(packets))) if packets is not None and not pd.isna(packets) else 0
+            safe_packets = max(0, int(float(raw_pkts))) if raw_pkts is not None and not pd.isna(raw_pkts) else 0
         except (ValueError, TypeError):
             safe_packets = 0
 
@@ -398,6 +412,30 @@ class ThreatDetector:
             "risk": raw_risk or "Low"
         })
 
+        # Evaluate Supervised Threat Classification
+        try:
+            from ml_engine import get_supervised_classifier
+            clf = get_supervised_classifier()
+            clf_eval = clf.predict_sample({
+                "packets": safe_packets,
+                "port": safe_port or 0,
+                "source_ip": safe_ip,
+                "destination_ip": destination_ip or "Target Perimeter",
+                "protocol": "TCP"
+            })
+        except Exception:
+            clf_eval = {"predicted_class": "Uncalibrated", "is_threat": False, "confidence": 0.0}
+
+        # Clear distinction between rule match, supervised ML, and statistical anomaly
+        if threat_detected and rule_id != "RULE-NOMINAL-00":
+            detection_method = "Deterministic Rule Heuristic"
+        elif clf_eval.get("is_threat") and clf_eval.get("confidence", 0.0) >= 0.60:
+            detection_method = "Supervised ML Classification"
+        elif ml_eval.get("is_anomaly"):
+            detection_method = "Statistical Anomaly Deviation"
+        else:
+            detection_method = "Nominal Baseline"
+
         return {
             "threat_detected": threat_detected,
             "activity": threat_name,
@@ -411,8 +449,15 @@ class ThreatDetector:
             "destination_port": safe_port,
             "packets": safe_packets,
             "ml_anomaly_score": ml_eval.get("raw_score", 0.0),
+            "anomaly_score": ml_eval.get("raw_score", 0.0),
+            "is_probability": False,
             "ml_is_anomaly": ml_eval.get("is_anomaly", False),
             "ml_confidence": ml_eval.get("confidence", 0.0),
+            "supervised_class": clf_eval.get("predicted_class", "Uncalibrated"),
+            "supervised_confidence": clf_eval.get("confidence", 0.0),
+            "supervised_is_threat": clf_eval.get("is_threat", False),
+            "detection_method": detection_method,
+            "detection_tier": detection_method,
             "model_version": self.ml_engine.model_version,
             "ml_disclaimer": ml_eval.get("disclaimer", "")
         }

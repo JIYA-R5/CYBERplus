@@ -1,0 +1,161 @@
+{
+  "model_version": "web_log_v1.0.0",
+  "model_task": "web_log_anomaly_detector",
+  "selected_algorithm": "Logistic Regression",
+  "feature_schema": [
+    "Request_Type",
+    "Status_Code",
+    "User_Agent"
+  ],
+  "excluded_features": [
+    "IP_Address",
+    "Session_ID",
+    "Timestamp",
+    "Location"
+  ],
+  "exclusion_rationale": "Identifiers (IP_Address, Session_ID) cause memorization leakage; Timestamp creates trivial temporal shortcuts; Location introduces synthetic geographic bias (North Korea 100% anomaly heuristic).",
+  "training_date": "2026-10-28T20:46:30.754741",
+  "dataset_fingerprint_sha256": "78d473f613d5407b059406b3bf58a358ac77a5f88986ac25194c284dec64cdc3",
+  "decision_threshold": 0.4,
+  "validation_results": {
+    "accuracy": 0.5249,
+    "precision": 0.0515,
+    "recall": 0.5068,
+    "f1": 0.0936,
+    "fpr": 0.4742,
+    "roc_auc": 0.5077,
+    "tp": 37,
+    "fp": 681,
+    "tn": 755,
+    "fn": 36,
+    "confusion_matrix": [
+      [
+        755,
+        681
+      ],
+      [
+        36,
+        37
+      ]
+    ],
+    "model_name": "Logistic Regression",
+    "split": "validation",
+    "threshold": 0.5
+  },
+  "held_out_test_results": {
+    "accuracy": 0.104,
+    "precision": 0.0494,
+    "recall": 0.9467,
+    "f1": 0.0939,
+    "fpr": 0.9395,
+    "roc_auc": 0.5528,
+    "tp": 71,
+    "fp": 1366,
+    "tn": 88,
+    "fn": 4,
+    "confusion_matrix": [
+      [
+        88,
+        1366
+      ],
+      [
+        4,
+        71
+      ]
+    ],
+    "model_name": "Logistic Regression",
+    "split": "test_held_out",
+    "threshold": 0.4
+  },
+  "chronological_test_results": {
+    "accuracy": 0.0733,
+    "precision": 0.0453,
+    "recall": 1.0,
+    "f1": 0.0867,
+    "fpr": 0.9693,
+    "roc_auc": 0.6058,
+    "tp": 66,
+    "fp": 1390,
+    "tn": 44,
+    "fn": 0,
+    "confusion_matrix": [
+      [
+        44,
+        1390
+      ],
+      [
+        0,
+        66
+      ]
+    ],
+    "model_name": "Logistic Regression (Chronological)",
+    "split": "chronological_future_test",
+    "threshold": 0.4
+  },
+  "threshold_tradeoff_sweep": [
+    {
+      "threshold": 0.1,
+      "precision": 0.0484,
+      "recall": 1.0,
+      "f1": 0.0923,
+      "fpr": 1.0
+    },
+    {
+      "threshold": 0.2,
+      "precision": 0.0484,
+      "recall": 1.0,
+      "f1": 0.0923,
+      "fpr": 1.0
+    },
+    {
+      "threshold": 0.3,
+      "precision": 0.0484,
+      "recall": 1.0,
+      "f1": 0.0923,
+      "fpr": 1.0
+    },
+    {
+      "threshold": 0.4,
+      "precision": 0.0495,
+      "recall": 0.9726,
+      "f1": 0.0943,
+      "fpr": 0.9485
+    },
+    {
+      "threshold": 0.5,
+      "precision": 0.0515,
+      "recall": 0.5068,
+      "f1": 0.0936,
+      "fpr": 0.4742
+    },
+    {
+      "threshold": 0.6,
+      "precision": 0.0256,
+      "recall": 0.0137,
+      "f1": 0.0179,
+      "fpr": 0.0265
+    },
+    {
+      "threshold": 0.7,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "fpr": 0.0
+    },
+    {
+      "threshold": 0.8,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "fpr": 0.0
+    },
+    {
+      "threshold": 0.9,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "fpr": 0.0
+    }
+  ],
+  "disclaimer": "This model detects anomalous application/web-log patterns (HTTP verb, status code, user agent). It does not inspect packet-level or flow-level network measurements."
+}

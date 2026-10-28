@@ -26,6 +26,15 @@ env/
 *.sqlite
 *.sqlite3
 
-# Markdown documentation (exclude all .md files except README.md)
+# Markdown documentation (preserve project READMEs)
 *.md
 !README.md
+!agent/README.md
+
+# Docker volume mounts & temporary data
+sentinel_data/
+sentinel_models/
+data/uploads/
+*.db-wal
+*.db-shm
+

@@ -1,0 +1,18 @@
+{
+  "status": "RUNNING",
+  "collector_mode": "PCAP_REPLAY",
+  "host_id": "POWERHOUSE",
+  "interface": "default",
+  "bpf_filter": null,
+  "tshark_path": "C:\\Program Files\\Wireshark\\tshark.exe",
+  "tshark_version": "4.6.x (Npcap)",
+  "uptime_seconds": 0.2,
+  "packets_captured": 3,
+  "flows_transmitted": 0,
+  "parsing_errors": 0,
+  "transmission_errors": 1,
+  "restart_count": 0,
+  "last_event_time": null,
+  "last_error": "Transmission notice: HTTP Error 404: Not Found",
+  "timestamp": "2026-10-28T23:07:21.779796"
+}

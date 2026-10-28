@@ -7,9 +7,13 @@ AI threat copilot, automated containment playbooks, and live telemetry simulatio
 import os
 import sys
 import json
+import uuid
 import datetime
+import threading
 from typing import Dict, Any, List, Optional
-from fastapi import FastAPI, UploadFile, File, Form, Request, HTTPException, Depends, Header
+import pandas as pd
+import numpy as np
+from fastapi import FastAPI, UploadFile, File, Form, Request, HTTPException, Depends, Header, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel
 
@@ -35,11 +39,28 @@ from database import DatabaseManager, get_db
 from log_parser import LogParser
 from live_monitor import LiveMonitoringSimulator, get_live_simulator
 
+from fastapi.middleware.cors import CORSMiddleware
+
 # Initialize FastAPI application
 app = FastAPI(
     title="SentinelAI Cloud SOC",
     description="Intrusion Detection, Behavioral Correlation & Incident Response API",
     version="2.5.0"
+)
+
+# Configure CORS according to allowed frontend origins
+allowed_origins_raw = os.environ.get(
+    "ALLOWED_ORIGINS",
+    "http://localhost:8501,http://127.0.0.1:8501,http://localhost:3000,http://localhost:8000"
+)
+allowed_origins = [orig.strip() for orig in allowed_origins_raw.split(",") if orig.strip()]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["*"],
 )
 
 detector = get_detector()
@@ -103,6 +124,84 @@ class RetentionPurgeRequest(BaseModel):
     retention_days: int = 30
     operator: str = "Security Assistant User"
 
+class AgentTelemetryPayload(BaseModel):
+    host_id: str = "endpoint-host"
+    agent_version: str = "1.0.0"
+    os_type: str = "windows"
+    events: List[Dict[str, Any]]
+
+class NetworkEventSchema(BaseModel):
+    event_id: Optional[str] = None
+    timestamp: Optional[str] = None
+    src_ip: str
+    dst_ip: str
+    src_port: Optional[int] = 0
+    dst_port: int
+    protocol: Optional[str] = "TCP"
+    total_packets: Optional[int] = 1
+    total_bytes: Optional[int] = 64
+    duration: Optional[float] = 0.05
+    tcp_flags: Optional[Dict[str, Any]] = None
+    syn_count: Optional[int] = 0
+    ack_count: Optional[int] = 0
+    rst_count: Optional[int] = 0
+    fin_count: Optional[int] = 0
+    is_replay: Optional[bool] = False
+    source: Optional[str] = "tshark_live"
+
+class CollectorBatchPayload(BaseModel):
+    schema_version: str = "v1"
+    collector_id: str
+    timestamp: Optional[str] = None
+    events: List[NetworkEventSchema]
+
+class PCAPLiveStreamPayload(BaseModel):
+    host_id: str = "host-capture-agent"
+    agent_type: str = "host_tshark_capture"
+    timestamp: Optional[str] = None
+    flows: List[Dict[str, Any]]
+
+class WebSocketManager:
+    def __init__(self):
+        self.active_connections: List[WebSocket] = []
+        self._lock = threading.Lock()
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        with self._lock:
+            self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        with self._lock:
+            if websocket in self.active_connections:
+                self.active_connections.remove(websocket)
+
+    async def broadcast_json(self, message: Dict[str, Any]):
+        with self._lock:
+            conns = list(self.active_connections)
+        for conn in conns:
+            try:
+                await conn.send_json(message)
+            except Exception:
+                self.disconnect(conn)
+
+ws_manager = WebSocketManager()
+
+class DatasetValidationRequest(BaseModel):
+    dataset_name: Optional[str] = "sentinel_enriched_telemetry.csv"
+    required_columns: Optional[List[str]] = None
+    min_samples: int = 10
+
+class MLTrainRequest(BaseModel):
+    model_type: str = "supervised_classifier"  # "supervised_classifier" or "isolation_forest"
+    dataset: str = "sentinel_enriched_telemetry.csv"
+    label_column: str = "Activity"
+    version_tag: Optional[str] = None
+    test_size: float = 0.25
+    contamination: Optional[float] = 0.15
+    trained_by: str = "SOC Security Engineer"
+    is_reviewed_ground_truth: bool = True
+
 
 # ------------------------------------------------------------------------------
 # Server-Side Authorization Dependency for Privileged Endpoints
@@ -136,17 +235,181 @@ def verify_admin_authorization(
     return True
 
 
+def verify_agent_authorization(
+    x_agent_secret: Optional[str] = Header(None, alias="X-Agent-Secret"),
+    authorization: Optional[str] = Header(None)
+):
+    """
+    Enforce server-side authorization on agent telemetry ingestion routes.
+    If SENTINEL_AGENT_SECRET is configured, verifies X-Agent-Secret header or Bearer token.
+    """
+    expected_secret = os.environ.get("SENTINEL_AGENT_SECRET", "").strip()
+    if expected_secret:
+        token = x_agent_secret
+        if not token and authorization and authorization.startswith("Bearer "):
+            token = authorization.split("Bearer ", 1)[1].strip()
+        if not token or token != expected_secret:
+            raise HTTPException(
+                status_code=401,
+                detail="Unauthorized: Valid X-Agent-Secret header or Bearer token required for agent telemetry ingestion."
+            )
+    return True
+
+
 # ------------------------------------------------------------------------------
 # API Endpoints
 # ------------------------------------------------------------------------------
+@app.get("/health")
 @app.get("/api/health")
 def health_check():
+    db_ok = True
+    try:
+        db.get_incidents()
+    except Exception:
+        db_ok = False
+
     return {
-        "status": "healthy",
+        "status": "healthy" if db_ok else "degraded",
         "service": "SentinelAI Cloud SOC",
         "version": "2.5.0",
-        "environment": "vercel_serverless" if os.environ.get("VERCEL") else "local",
+        "database": "connected" if db_ok else "unreachable",
+        "gemini_active": explainer.is_gemini_active,
+        "environment": "vercel_serverless" if os.environ.get("VERCEL") else ("docker" if os.environ.get("DOCKER_CONTAINER") else "local"),
         "timestamp": datetime.datetime.now().isoformat()
+    }
+
+
+@app.get("/ready")
+@app.get("/api/ready")
+def readiness_check():
+    """
+    Readiness probe verifying database responsiveness, active ML artifacts,
+    and streaming event buffer state.
+    """
+    db_ok = True
+    try:
+        db.get_incidents()
+    except Exception:
+        db_ok = False
+
+    from stream_engine import get_stream_publisher
+    stream_pub = get_stream_publisher()
+    stream_status = stream_pub.get_status()
+
+    artifacts_dir = os.path.join(ROOT_DIR, "artifacts")
+    iso_exists = os.path.isfile(os.path.join(artifacts_dir, "network_anomaly_isolation_forest.joblib"))
+    rf_exists = os.path.isfile(os.path.join(artifacts_dir, "network_threat_classifier.joblib"))
+    web_log_exists = os.path.isfile(os.path.join(artifacts_dir, "web_log_model.joblib"))
+
+    return {
+        "status": "ready" if db_ok else "unready",
+        "service": "SentinelAI Cloud SOC",
+        "version": "2.5.0",
+        "database": "ready" if db_ok else "unreachable",
+        "redis_stream": "connected" if stream_status["is_connected"] else "buffered_fallback",
+        "models": {
+            "network_isolation_forest": "loaded" if iso_exists else "pending",
+            "network_random_forest": "loaded" if rf_exists else "pending",
+            "web_log_baseline": "loaded" if web_log_exists else "pending"
+        },
+        "timestamp": datetime.datetime.now().isoformat()
+    }
+
+
+@app.websocket("/ws/alerts")
+async def websocket_alerts_endpoint(websocket: WebSocket):
+    """WebSocket feed broadcasting live security alerts to connected dashboards."""
+    await ws_manager.connect(websocket)
+    try:
+        while True:
+            data = await websocket.receive_text()
+            if data == "ping":
+                await websocket.send_text("pong")
+    except WebSocketDisconnect:
+        ws_manager.disconnect(websocket)
+    except Exception:
+        ws_manager.disconnect(websocket)
+
+
+@app.websocket("/ws/events")
+async def websocket_events_endpoint(websocket: WebSocket):
+    """WebSocket feed broadcasting raw network telemetry events."""
+    await ws_manager.connect(websocket)
+    try:
+        while True:
+            data = await websocket.receive_text()
+            if data == "ping":
+                await websocket.send_text("pong")
+    except WebSocketDisconnect:
+        ws_manager.disconnect(websocket)
+    except Exception:
+        ws_manager.disconnect(websocket)
+
+
+@app.post("/api/agent/telemetry", dependencies=[Depends(verify_agent_authorization)])
+@app.post("/api/ingest", dependencies=[Depends(verify_agent_authorization)])
+def ingest_agent_telemetry(payload: AgentTelemetryPayload):
+    """
+    Authenticated ingestion route for native Windows endpoint agents and Dockerized collectors.
+    Normalizes network events, correlates intrusions, and persists detections to SQLite.
+    """
+    if not payload.events:
+        raise HTTPException(status_code=400, detail="Empty telemetry payload: no events provided.")
+
+    # Convert events list to DataFrame
+    df = LogParser.events_to_dataframe(payload.events)
+    if df.empty:
+        import pandas as pd
+        df = pd.DataFrame(payload.events)
+
+    if df.empty:
+        raise HTTPException(status_code=400, detail="Invalid event format: unable to parse telemetry.")
+
+    # Run detection and correlation
+    enriched_df = detector.detect_dataframe(df)
+    correlated = detector.correlate_incidents(df)
+
+    # Ingestion audit record
+    db.log_audit_action(
+        incident_id="AGENT_INGEST",
+        action_type="ENDPOINT_AGENT_TELEMETRY",
+        target_ip=f"Host: {payload.host_id} ({payload.os_type})",
+        execution_mode="authenticated_agent",
+        operator=f"Agent-{payload.host_id}",
+        details=f"Ingested {len(payload.events)} event(s) from agent v{payload.agent_version}. Correlated {len(correlated)} incident(s).",
+        result="SUCCESS"
+    )
+
+    persisted = []
+    for inc in correlated:
+        inc_dict = inc.to_dict()
+        db.save_incident(inc_dict)
+
+        # Trigger AI explanation
+        exp = explainer.explain_incident(inc_dict)
+        provider_tag = "Google Gemini Live AI" if exp.get("provider") == "google_gemini" else "Local Knowledge Base"
+
+        db.log_audit_action(
+            incident_id=inc.incident_id,
+            action_type="AGENT_INCIDENT_EXPLANATION",
+            target_ip=inc.source_ip,
+            execution_mode="live_ai" if exp.get("provider") == "google_gemini" else "local_fallback",
+            operator=provider_tag,
+            details=f"Threat reasoning generated for {inc.category}: {exp.get('summary', '')[:140]}",
+            result="SUCCESS"
+        )
+        persisted.append({
+            "incident": inc_dict,
+            "explanation": exp
+        })
+
+    return {
+        "status": "success",
+        "host_id": payload.host_id,
+        "agent_version": payload.agent_version,
+        "received_events": len(payload.events),
+        "correlated_incidents": len(correlated),
+        "incidents": persisted
     }
 
 
@@ -485,6 +748,531 @@ def rollback_block_endpoint(req: RollbackBlockRequest):
 def purge_retention(req: RetentionPurgeRequest):
     res = db.apply_data_retention(retention_days=req.retention_days, operator=req.operator)
     return {"status": "success", "result": res}
+
+
+# ------------------------------------------------------------------------------
+# PCAP Ingestion & Processing APIs
+# ------------------------------------------------------------------------------
+PCAP_UPLOAD_DIR = os.environ.get("PCAP_UPLOAD_DIR") or os.path.join(ROOT_DIR, "data", "uploads")
+os.makedirs(PCAP_UPLOAD_DIR, exist_ok=True)
+
+
+@app.post("/api/pcap/upload")
+async def upload_pcap_endpoint(file: UploadFile = File(...)):
+    """
+    Accepts authorized .pcap and .pcapng captures.
+    Validates file format, magic bytes, and size, then dispatches background processing.
+    """
+    from pcap_engine import PCAPValidator, PCAPValidationError, get_job_manager
+
+    filename = file.filename or "capture.pcap"
+    lower_fn = filename.lower()
+    if not (lower_fn.endswith(".pcap") or lower_fn.endswith(".pcapng")):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid file format. Only standard .pcap and modern .pcapng captures are supported."
+        )
+
+    # Secure sanitized upload destination
+    safe_name = os.path.basename(filename).replace(" ", "_")
+    unique_name = f"{uuid.uuid4().hex[:8]}_{safe_name}"
+    dest_path = os.path.join(PCAP_UPLOAD_DIR, unique_name)
+
+    # Stream write with size limit checking
+    max_size = 100 * 1024 * 1024  # 100 MB
+    bytes_written = 0
+
+    try:
+        with open(dest_path, "wb") as out_f:
+            while chunk := await file.read(65536):
+                bytes_written += len(chunk)
+                if bytes_written > max_size:
+                    out_f.close()
+                    os.remove(dest_path)
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"Uploaded file exceeds maximum limit of {max_size // (1024*1024)} MB."
+                    )
+                out_f.write(chunk)
+    except HTTPException:
+        raise
+    except Exception as e:
+        if os.path.exists(dest_path):
+            os.remove(dest_path)
+        raise HTTPException(status_code=500, detail=f"Failed to save upload: {str(e)}")
+
+    # Validate capture header magic bytes
+    try:
+        is_valid, fmt, msg = PCAPValidator.validate_file(dest_path, max_size_bytes=max_size)
+    except PCAPValidationError as e:
+        if os.path.exists(dest_path):
+            os.remove(dest_path)
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # Create job in background worker queue
+    job_mgr = get_job_manager()
+    job_id = job_mgr.create_job(filename=filename, file_size=bytes_written, saved_path=dest_path)
+    job_mgr.run_job_async(job_id)
+
+    # Record capture entry in database
+    db.save_pcap_capture({
+        "capture_id": job_id,
+        "filename": filename,
+        "file_size": bytes_written,
+        "uploaded_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "format": fmt,
+        "status": "PROCESSING",
+        "metadata": {"saved_path": dest_path}
+    })
+
+    return {
+        "status": "QUEUED",
+        "job_id": job_id,
+        "filename": filename,
+        "file_size": bytes_written,
+        "format": fmt,
+        "message": "Capture uploaded successfully. Processing started in background worker."
+    }
+
+
+@app.get("/api/pcap/jobs")
+def list_pcap_jobs():
+    """List recent capture processing jobs."""
+    from pcap_engine import get_job_manager
+    jobs = get_job_manager().list_jobs()
+    return {"jobs": jobs}
+
+
+@app.get("/api/pcap/jobs/{job_id}")
+def get_pcap_job_status(job_id: str):
+    """Retrieve capture processing status and flow metrics."""
+    from pcap_engine import get_job_manager
+    job = get_job_manager().get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Capture job '{job_id}' not found.")
+    
+    # Return job with preview of flows
+    flows_preview = job.get("flows", [])[:20]
+    return {
+        "job_id": job["job_id"],
+        "filename": job["filename"],
+        "file_size": job["file_size"],
+        "status": job["status"],
+        "progress_percent": job["progress_percent"],
+        "packet_count": job["packet_count"],
+        "flow_count": job["flow_count"],
+        "engine_used": job.get("engine_used"),
+        "started_at": job.get("started_at"),
+        "completed_at": job.get("completed_at"),
+        "error_message": job.get("error_message"),
+        "flows_preview": flows_preview
+    }
+
+
+@app.get("/api/pcap/jobs/{job_id}/flows")
+def get_pcap_job_flows(job_id: str):
+    """Retrieve all extracted bidirectional flows for a completed capture job."""
+    from pcap_engine import get_job_manager
+    job = get_job_manager().get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Capture job '{job_id}' not found.")
+    return {
+        "job_id": job_id,
+        "flow_count": len(job.get("flows", [])),
+        "flows": job.get("flows", [])
+    }
+
+
+@app.post("/api/pcap/jobs/{job_id}/ingest")
+def ingest_pcap_flows_to_soc(job_id: str):
+    """
+    Ingest extracted bidirectional flows into live SentinelAI incident detection pipeline.
+    Persists flows and produces correlated threat alerts.
+    """
+    from pcap_engine import get_job_manager
+    job = get_job_manager().get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Capture job '{job_id}' not found.")
+    if job.get("status") != "COMPLETED":
+        raise HTTPException(status_code=400, detail="Cannot ingest capture: processing is not yet completed.")
+
+    flows = job.get("flows", [])
+    if not flows:
+        return {"status": "success", "ingested_flows": 0, "incidents_created": 0}
+
+    # Persist flows to database
+    db.save_pcap_flows(job_id, flows)
+
+    # Convert flows to telemetry DataFrame and evaluate through threat detector
+    records = []
+    for f in flows:
+        records.append({
+            "Time": datetime.datetime.fromtimestamp(f.get("start_time", time.time())).strftime("%Y-%m-%d %H:%M:%S"),
+            "Source IP": f.get("src_ip", "0.0.0.0"),
+            "Destination IP": f.get("dst_ip", "0.0.0.0"),
+            "Port": f.get("dst_port", 80),
+            "Source Port": f.get("src_port", 0),
+            "Protocol": f.get("protocol", "TCP"),
+            "Packets": f.get("total_packets", 1),
+            "Bytes": f.get("total_bytes", 64),
+            "Duration": f.get("duration", 0.05),
+            "Activity": "Normal Traffic",
+            "Risk": "Low"
+        })
+
+    flows_df = pd.DataFrame(records)
+    incidents = detector.correlate_incidents(flows_df)
+
+    # Save incidents
+    for inc in incidents:
+        db.save_incident(inc.to_dict())
+
+    return {
+        "status": "success",
+        "job_id": job_id,
+        "ingested_flows": len(flows),
+        "incidents_created": len(incidents),
+        "incidents": [inc.to_dict() for inc in incidents]
+    }
+
+
+@app.post("/api/pcap/live-stream", dependencies=[Depends(verify_agent_authorization)])
+def ingest_live_pcap_stream(payload: PCAPLiveStreamPayload):
+    """
+    Authenticated ingestion endpoint for supervised host TShark capture agent.
+    Streams live bidirectional flows, publishes to Redis Streams, and evaluates incidents.
+    """
+    flows = payload.flows
+    if not flows:
+        return {"status": "success", "received_flows": 0, "incidents_created": 0}
+
+    from stream_engine import get_stream_publisher
+    publisher = get_stream_publisher()
+
+    # Log events & stream
+    for f in flows:
+        is_replay = bool(f.get("is_replay", False))
+        act_name = "PCAP Replay Flow" if is_replay else "Live Host Flow"
+        db.log_telemetry_event({
+            "source_ip": f.get("src_ip", "0.0.0.0"),
+            "destination_ip": f.get("dst_ip", "10.0.0.1"),
+            "port": f.get("dst_port", 80),
+            "packets": f.get("total_packets", 1),
+            "activity": act_name,
+            "risk": "Low"
+        })
+        publisher.publish_event(f)
+
+    # Evaluate correlation
+    records = []
+    for f in flows:
+        is_replay = bool(f.get("is_replay", False))
+        act_name = "PCAP Replay Flow" if is_replay else "Live Host Flow"
+        records.append({
+            "Time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "Source IP": f.get("src_ip", "0.0.0.0"),
+            "Destination IP": f.get("dst_ip", "10.0.0.1"),
+            "Port": f.get("dst_port", 80),
+            "Source Port": f.get("src_port", 0),
+            "Protocol": f.get("protocol", "TCP"),
+            "Packets": f.get("total_packets", 1),
+            "Activity": act_name,
+            "Risk": "Low"
+        })
+    df_flows = pd.DataFrame(records)
+    incidents = detector.correlate_incidents(df_flows)
+
+    incidents_saved = []
+    for inc in incidents:
+        inc_d = inc.to_dict()
+        is_replay = bool(flows[0].get("is_replay", False)) if flows else False
+        inc_d["is_replay"] = is_replay
+        inc_d["telemetry_source"] = "pcap_replay" if is_replay else "tshark_live"
+        db.save_incident(inc_d)
+        incidents_saved.append(inc_d)
+
+    return {
+        "status": "success",
+        "host_id": payload.host_id,
+        "received_flows": len(flows),
+        "incidents_created": len(incidents_saved)
+    }
+
+
+@app.post("/api/collector/events", dependencies=[Depends(verify_agent_authorization)])
+def ingest_collector_events(payload: CollectorBatchPayload):
+    """
+    Versioned, authenticated ingestion endpoint for host TShark collector and external probes.
+    Validates payload bounds, assigns unique IDs, publishes to Redis Streams,
+    and returns correlated security detections.
+    """
+    if not payload.events:
+        raise HTTPException(status_code=400, detail="Empty event batch: no events provided.")
+
+    if len(payload.events) > 500:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Batch size {len(payload.events)} exceeds maximum allowed limit of 500 events."
+        )
+
+    from stream_engine import get_stream_publisher
+    publisher = get_stream_publisher()
+    now_iso = datetime.datetime.now().isoformat()
+
+    normalized_events = []
+    for ev in payload.events:
+        d = ev.dict()
+        if not d.get("event_id"):
+            d["event_id"] = f"EVT-{uuid.uuid4().hex[:10].upper()}"
+        if not d.get("timestamp"):
+            d["timestamp"] = now_iso
+        d["collector_id"] = payload.collector_id
+        d["schema_version"] = payload.schema_version
+
+        # Publish to Redis Stream buffer
+        publisher.publish_event(d)
+        normalized_events.append(d)
+
+        # Log event to database
+        is_replay = bool(d.get("is_replay", False))
+        act_name = "PCAP Replay Flow" if is_replay else "Live Network Flow"
+        try:
+            db.log_telemetry_event({
+                "source_ip": d.get("src_ip", "0.0.0.0"),
+                "destination_ip": d.get("dst_ip", "10.0.0.1"),
+                "port": d.get("dst_port", 80),
+                "packets": d.get("total_packets", 1),
+                "activity": act_name,
+                "risk": "Low"
+            })
+        except Exception:
+            pass
+
+    # Correlate incidents
+    records = []
+    for d in normalized_events:
+        is_replay = bool(d.get("is_replay", False))
+        act_name = "PCAP Replay Flow" if is_replay else "Live Network Flow"
+        records.append({
+            "Time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "Source IP": d.get("src_ip", "0.0.0.0"),
+            "Destination IP": d.get("dst_ip", "10.0.0.1"),
+            "Port": d.get("dst_port", 80),
+            "Protocol": d.get("protocol", "TCP"),
+            "Packets": d.get("total_packets", 1),
+            "Bytes": d.get("total_bytes", 64),
+            "Activity": act_name,
+            "Risk": "Low"
+        })
+
+    df_flows = pd.DataFrame(records)
+    incidents = detector.correlate_incidents(df_flows)
+
+    incidents_saved = []
+    for inc in incidents:
+        inc_d = inc.to_dict()
+        is_replay = bool(normalized_events[0].get("is_replay", False)) if normalized_events else False
+        inc_d["is_replay"] = is_replay
+        inc_d["telemetry_source"] = "pcap_replay" if is_replay else "tshark_live"
+        db.save_incident(inc_d)
+        incidents_saved.append(inc_d)
+
+    return {
+        "status": "accepted",
+        "schema_version": payload.schema_version,
+        "collector_id": payload.collector_id,
+        "received_events": len(payload.events),
+        "incidents_created": len(incidents_saved),
+        "incidents": incidents_saved
+    }
+
+
+# ------------------------------------------------------------------------------
+# ML Training & Model Registry APIs
+# ------------------------------------------------------------------------------
+@app.get("/api/dataset/overview")
+def get_dataset_overview():
+    """
+    Inspect the active synthetic training dataset and return schema, label counts,
+    feature columns, and class balance overview.
+    """
+    csv_path = os.path.join(ROOT_DIR, "sentinel_enriched_telemetry.csv")
+    if not os.path.exists(csv_path):
+        csv_path = os.path.join(ROOT_DIR, "data", "sentinel_enriched_telemetry_audit.csv")
+
+    if not os.path.exists(csv_path):
+        raise HTTPException(status_code=404, detail="Synthetic telemetry dataset not found.")
+
+    df = pd.read_csv(csv_path)
+
+    act_counts = df["Activity"].value_counts().to_dict() if "Activity" in df.columns else {}
+    risk_counts = df["Risk"].value_counts().to_dict() if "Risk" in df.columns else {}
+    threat_counts = {str(k): int(v) for k, v in df["Threat Detected"].value_counts().to_dict().items()} if "Threat Detected" in df.columns else {}
+    proto_counts = df["Protocol"].value_counts().to_dict() if "Protocol" in df.columns else {}
+
+    return {
+        "dataset_name": "sentinel_enriched_telemetry.csv",
+        "sample_count": len(df),
+        "columns": list(df.columns),
+        "raw_features": ["Time", "Source IP", "Destination IP", "Port", "Source Port", "Protocol", "Packets"],
+        "engineered_features": [
+            "packets", "port", "source_port", "flow_duration", "bytes", "flow_frequency",
+            "unique_ports_contacted", "mean_packets_per_flow", "is_privileged_port",
+            "is_admin_port", "proto_tcp", "proto_udp", "proto_icmp", "proto_other",
+            "tcp_flag_syn", "tcp_flag_rst", "tcp_flag_ack", "packets_per_sec", "bytes_per_sec"
+        ],
+        "attack_categories": act_counts,
+        "risk_distribution": risk_counts,
+        "threat_detected_distribution": threat_counts,
+        "protocol_distribution": proto_counts,
+        "label_columns": ["Activity", "Threat Detected"]
+    }
+
+
+@app.post("/api/dataset/validate")
+def validate_dataset_endpoint(req: DatasetValidationRequest):
+    """
+    Validate candidate training dataset before initiating model training.
+    """
+    csv_path = os.path.join(ROOT_DIR, req.dataset_name)
+    if not os.path.isfile(csv_path):
+        csv_path = os.path.join(ROOT_DIR, "data", req.dataset_name)
+
+    if not os.path.isfile(csv_path):
+        return {"valid": False, "reason": f"Dataset file '{req.dataset_name}' not found."}
+
+    df = pd.read_csv(csv_path)
+    if len(df) < req.min_samples:
+        return {
+            "valid": False,
+            "sample_count": len(df),
+            "reason": f"Sample count ({len(df)}) below minimum required threshold ({req.min_samples})."
+        }
+
+    return {
+        "valid": True,
+        "sample_count": len(df),
+        "columns": list(df.columns),
+        "message": f"Dataset '{req.dataset_name}' validated with {len(df)} samples."
+    }
+
+
+@app.post("/api/ml/train", dependencies=[Depends(verify_admin_authorization)])
+def train_model_endpoint(req: MLTrainRequest):
+    """
+    Train supervised attack classifier or unsupervised anomaly detector on reviewed dataset.
+    Enforces the security guardrail: never trains on unreviewed live alerts.
+    """
+    if not req.is_reviewed_ground_truth:
+        raise HTTPException(
+            status_code=400,
+            detail="Security Policy Guardrail: Automated model retraining on unreviewed live alerts is strictly prohibited."
+        )
+
+    csv_path = os.path.join(ROOT_DIR, req.dataset)
+    if not os.path.isfile(csv_path):
+        csv_path = os.path.join(ROOT_DIR, "data", req.dataset)
+
+    if not os.path.isfile(csv_path):
+        raise HTTPException(status_code=404, detail=f"Training dataset '{req.dataset}' not found.")
+
+    df = pd.read_csv(csv_path)
+
+    if req.model_type == "supervised_classifier":
+        from ml_engine import get_supervised_classifier
+        classifier = get_supervised_classifier()
+        try:
+            metrics = classifier.train_on_dataset(
+                data=df,
+                label_column=req.label_column,
+                version_tag=req.version_tag,
+                test_size=req.test_size,
+                trained_by=req.trained_by,
+                is_reviewed_ground_truth=req.is_reviewed_ground_truth
+            )
+            # Register in DB
+            db.register_model(
+                version=metrics["model_version"],
+                algorithm=metrics["algorithm"],
+                sample_count=metrics["total_samples"],
+                metrics=metrics,
+                artifact_path=metrics["artifact_path"],
+                trained_by=req.trained_by,
+                set_active=True
+            )
+            return {"status": "success", "model_type": "supervised_classifier", "metrics": metrics}
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    else:
+        # Unsupervised Isolation Forest training
+        from ml_engine import get_ml_engine
+        ml_eng = get_ml_engine()
+        metrics = ml_eng.train_controlled_pipeline(
+            training_data=df,
+            version_tag=req.version_tag,
+            test_size=req.test_size,
+            trained_by=req.trained_by,
+            contamination=req.contamination
+        )
+        if metrics.get("status") == "VALIDATED_AND_TRAINED":
+            db.register_model(
+                version=metrics["model_version"],
+                algorithm=metrics["algorithm"],
+                sample_count=metrics["total_samples"],
+                metrics=metrics,
+                artifact_path=metrics["artifact_path"],
+                trained_by=req.trained_by,
+                set_active=True
+            )
+            return {"status": "success", "model_type": "isolation_forest", "metrics": metrics}
+        raise HTTPException(status_code=400, detail=metrics.get("message", "Training rejected by validation gate."))
+
+
+@app.get("/api/ml/models")
+def list_ml_models():
+    """List all registered ML models with evaluation metrics."""
+    models = db.get_model_registry()
+    return {"models": models}
+
+
+@app.get("/api/ml/evaluation/{version}")
+def get_model_evaluation(version: str):
+    """Retrieve detailed evaluation metrics and confusion matrix for a model version."""
+    models = db.get_model_registry()
+    match = next((m for m in models if m["version"] == version), None)
+    if not match:
+        raise HTTPException(status_code=404, detail=f"Model version '{version}' not found in registry.")
+    return match
+
+
+@app.post("/api/ml/models/{version}/activate", dependencies=[Depends(verify_admin_authorization)])
+def activate_model_version(version: str):
+    """Activate a registered model version."""
+    models = db.get_model_registry()
+    match = next((m for m in models if m["version"] == version), None)
+    if not match:
+        raise HTTPException(status_code=404, detail=f"Model version '{version}' not found in registry.")
+
+    db.set_active_model_version(version)
+    # Also reload in active memory
+    from ml_engine import get_ml_engine, get_supervised_classifier
+    if "classifier" in match.get("algorithm", "").lower() or "randomforest" in match.get("algorithm", "").lower():
+        clf = get_supervised_classifier()
+        clf.model_version = version
+        clf._load_active_or_default()
+    else:
+        eng = get_ml_engine()
+        eng.revert_model(version)
+
+    return {"status": "success", "active_version": version, "algorithm": match.get("algorithm")}
+
+
+@app.get("/api/stream/status")
+def get_stream_engine_status():
+    """Return status of Redis Streams event and alert publishing."""
+    from stream_engine import get_stream_publisher
+    return get_stream_publisher().get_status()
 
 
 # ------------------------------------------------------------------------------

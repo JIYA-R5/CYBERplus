@@ -1,0 +1,109 @@
+================================================================================
+SENTINELAI CYBERSECURITY DATASET AUDIT REPORT
+================================================================================
+Dataset Path : C:\Users\Asus\Downloads\cybersync\CYBERplus\data\advanced_cybersecurity_data.csv
+File Size    : 638,918 bytes
+Total Rows   : 10,000
+Total Columns: 8
+--------------------------------------------------------------------------------
+
+[1] SCHEMA AND COLUMN VALIDATION
+  Actual Columns   : ['Timestamp', 'IP_Address', 'Request_Type', 'Status_Code', 'Anomaly_Flag', 'User_Agent', 'Session_ID', 'Location']
+  Expected Columns : ['Timestamp', 'IP_Address', 'Request_Type', 'Status_Code', 'Anomaly_Flag', 'User_Agent', 'Session_ID', 'Location']
+  Schema Match     : PERFECT MATCH
+
+[2] DATA INTEGRITY & MISSING VALUES
+  Total Null Values : 0
+    - No missing or NaN values detected in any column.
+  Duplicate Records : 0
+
+[3] TARGET DISTRIBUTION (Anomaly_Flag)
+  Normal Records (0)   : 9,510 (95.10%)
+  Anomaly Records (1)  : 490 (4.90%)
+  Class Imbalance Ratio: 19.41:1
+
+[4] CATEGORICAL DISTRIBUTIONS AND ANOMALY RATES
+
+  Breakdown by 'Request_Type': (exported to audit_request_type_rates.csv)
+    - DELETE      :  2472 records | 118 anomalies (  4.77%)
+    - GET         :  2527 records | 120 anomalies (  4.75%)
+    - POST        :  2490 records | 106 anomalies (  4.26%)
+    - PUT         :  2511 records | 146 anomalies (  5.81%)
+
+  Breakdown by 'Status_Code': (exported to audit_status_code_rates.csv)
+    - 200.0       :  2044 records |  89 anomalies (  4.35%)
+    - 301.0       :  1950 records |  97 anomalies (  4.97%)
+    - 403.0       :  2040 records |  99 anomalies (  4.85%)
+    - 404.0       :  1996 records |  95 anomalies (  4.76%)
+    - 500.0       :  1970 records | 110 anomalies (  5.58%)
+
+  Breakdown by 'User_Agent': (exported to audit_user_agent_rates.csv)
+    - Bot         :  1643 records |  94 anomalies (  5.72%)
+    - Chrome      :  1602 records |  75 anomalies (  4.68%)
+    - Edge        :  1634 records |  95 anomalies (  5.81%)
+    - Firefox     :  1709 records |  89 anomalies (  5.21%)
+    - Opera       :  1715 records |  64 anomalies (  3.73%)
+    - Safari      :  1697 records |  73 anomalies (  4.30%)
+
+[5] LOCATION BIAS & 'NORTH KOREA' FORENSIC ANALYSIS
+  Location Rates Table: (exported to audit_location_rates.csv)
+    - North Korea    :    10 records |  10 anomalies (100.00%)
+    - France         :  1399 records |  82 anomalies (  5.86%)
+    - Brazil         :  1473 records |  77 anomalies (  5.23%)
+    - USA            :  1423 records |  69 anomalies (  4.85%)
+    - China          :  1383 records |  67 anomalies (  4.84%)
+    - Germany        :  1501 records |  69 anomalies (  4.60%)
+    - India          :  1424 records |  62 anomalies (  4.35%)
+    - Canada         :  1387 records |  54 anomalies (  3.89%)
+
+  -> Specific Investigation: Location = 'North Korea'
+     Total Records        : 10
+     Anomalous Records    : 10
+     Anomaly Rate         : 100.00%
+     FINDING: 100.0% of records originating from 'North Korea' are labelled as ANOMALOUS.
+     EVALUATION: This indicates an explicit synthetic heuristic or heuristic rule injection.
+     RISK: If 'Location' is fed directly to an ML model, the model will learn a geographic shortcut
+     rather than inspecting packet payload/traffic mechanics, causing false positives on legitimate
+     regional traffic and failing on non-regional attackers.
+
+[6] IDENTIFIER, IP ADDRESS & SESSION ID AUDIT
+  Unique IP Addresses : 9,952 / 10,000 records
+  IPs appearing > 1x  : 1
+    - IP 15.6.62.53: 49 occurrences, 2 anomalies (4.1%)
+  Unique Session IDs  : 3,663
+  Multi-Record Sessions: 2,794 (76.3%)
+    - Sessions with mixed labels (0 and 1) : 421
+    - Sessions with 100% anomalous records : 48
+    - Sessions with 100% normal records    : 3,194
+  SPLIT GUIDANCE: Group-based splitting by 'Session_ID' is essential to prevent session-level leakage.
+
+[7] TIMESTAMP & SYNTHETIC GENERATION ARTIFACTS
+  Start Timestamp     : 2023-01-01 00:00:00
+  End Timestamp       : 2023-01-07 22:39:00
+  Total Time Span     : 6 days 22:39:00
+  Chronological Order : STRICTLY MONOTONIC INCREASING
+  Step Interval Mode  : 0 days 00:01:00
+  Step Regularity     : 100.00% of intervals are exactly 0 days 00:01:00
+  SYNTHETIC ARTIFACT: Timestamps were synthetically generated with uniform clock increments
+  rather than representing natural Poisson arrival times typical of real network packets.
+
+[8] FEATURE DETERMINISM & LABEL LEAKAGE EVALUATION
+  Feature 'Request_Type': Anomaly Rate range = [4.26%, 5.81%]
+  Feature 'Status_Code': Anomaly Rate range = [4.35%, 5.58%]
+  Feature 'User_Agent': Anomaly Rate range = [3.73%, 5.81%]
+  Total 3-way combinations: 120
+  100% Anomalous combinations: 0
+  No single 3-way combination deterministically dictates the anomaly flag.
+
+[9] SUMMARY FINDINGS & RECOMMENDATIONS
+  1. Nature of Data: This is an application/web-log dataset (HTTP verbs, status codes, user agents),
+     NOT a packet-level or flow-level network dataset. It must be identified strictly as a web-log model.
+  2. Geolocation Shortcut: Location = 'North Korea' has a 100% anomaly label, which is a synthetic heuristic.
+     'Location' must be excluded from baseline feature pipelines to avoid trivial shortcut learning.
+  3. Leakage Prevention: 'IP_Address' and 'Session_ID' are high-cardinality identifiers that will memorize
+     rather than generalize. Training baseline models MUST exclude IP_Address, Session_ID, Timestamp, and Location.
+  4. Grouped Validation: Records must be partitioned by 'Session_ID' using GroupShuffleSplit or GroupKFold
+     to ensure records from the same session never cross train/validation/test boundaries.
+  5. Class Imbalance: At 4.90% positive anomaly prevalence, models must be configured with class weighting
+     (class_weight='balanced') and evaluated on PR-AUC, F1-score, and false-positive rates rather than raw accuracy.
+================================================================================

@@ -1,0 +1,6 @@
+Model,Evaluation_Split,Threshold,Accuracy,Precision,Recall,F1_Score,False_Positive_Rate,ROC_AUC,TP,FP,TN,FN,Selected_Best
+Logistic Regression,Validation (Session-Grouped),0.5,0.5249,0.0515,0.5068,0.0936,0.4742,0.5077,37,681,755,36,True
+Decision Tree,Validation (Session-Grouped),0.5,0.3207,0.0467,0.6712,0.0873,0.6971,0.4605,49,1001,435,24,False
+Random Forest,Validation (Session-Grouped),0.5,0.5268,0.0467,0.4521,0.0846,0.4694,0.4803,33,674,762,40,False
+Logistic Regression,Final Test (Session-Grouped),0.4,0.104,0.0494,0.9467,0.0939,0.9395,0.5528,71,1366,88,4,True
+Logistic Regression (Temporal),Future Out-Of-Time Test,0.4,0.0733,0.0453,1.0,0.0867,0.9693,0.6058,66,1390,44,0,False

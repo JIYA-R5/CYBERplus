@@ -245,6 +245,55 @@ class ResponseEngine:
             "generated_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }
 
+    def recommend_safe_actions(self, incident: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Suggests tiered, non-disruptive safe responses tailored to incident evidence.
+        All actions remain simulated by default and require human approval.
+        """
+        src_ip = sanitize_ip(incident.get("source_ip", "0.0.0.0"))
+        category = incident.get("category", "Unknown Threat")
+        port = incident.get("port") or incident.get("destination_ports", [80])[0] if isinstance(incident.get("destination_ports"), list) and incident.get("destination_ports") else 80
+
+        return [
+            {
+                "action_id": "ACT-INVESTIGATE-SRC",
+                "action_type": "Investigate Source Host",
+                "target": src_ip,
+                "disruptive": False,
+                "description": f"Query DNS reverse lookup, internal asset inventory, and endpoint logs for {src_ip}.",
+                "status": "Recommended",
+                "requires_approval": False
+            },
+            {
+                "action_id": "ACT-REVIEW-SERVICE",
+                "action_type": "Review Potentially Exposed Service",
+                "target": f"Port {port}",
+                "disruptive": False,
+                "description": f"Verify whether port {port} should be exposed externally or restricted to VPN/internal subnets.",
+                "status": "Recommended",
+                "requires_approval": False
+            },
+            {
+                "action_id": "ACT-RATE-LIMIT",
+                "action_type": "Temporarily Rate-Limit Traffic",
+                "target": src_ip,
+                "disruptive": True,
+                "description": f"Apply temporary rate-limiting (e.g. 10 req/min) to {src_ip} via edge reverse proxy/WAF.",
+                "status": "Simulated (Requires Approval)",
+                "requires_approval": True,
+                "execution_mode": "dry_run"
+            },
+            {
+                "action_id": "ACT-ADMIN-REVIEW",
+                "action_type": "Request Administrator Review",
+                "target": src_ip,
+                "disruptive": False,
+                "description": f"Flag IP {src_ip} for Senior Security Architect review and sign-off before applying perimeter blocks.",
+                "status": "Pending Human Sign-off",
+                "requires_approval": True
+            }
+        ]
+
     def execute_response_action(
         self,
         incident_id: str,

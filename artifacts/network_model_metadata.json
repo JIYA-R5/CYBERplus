@@ -1,0 +1,129 @@
+{
+  "model_version": "network_flow_v1.0.0",
+  "model_task": "network_flow_anomaly_detector",
+  "feature_schema": [
+    "total_packets",
+    "total_bytes",
+    "duration",
+    "packets_per_sec",
+    "bytes_per_sec",
+    "src_port",
+    "dst_port",
+    "is_privileged_port",
+    "is_admin_port",
+    "is_ephemeral_src",
+    "protocol_tcp",
+    "protocol_udp",
+    "protocol_icmp",
+    "protocol_other",
+    "syn_count",
+    "ack_count",
+    "rst_count",
+    "fin_count",
+    "syn_ratio",
+    "rst_ratio",
+    "mean_packet_length",
+    "std_packet_length",
+    "flow_iat_mean",
+    "flow_iat_std",
+    "unique_dst_ports_src",
+    "flow_frequency_src",
+    "failed_conn_indicator"
+  ],
+  "training_date": "2026-10-28T20:49:13.896168",
+  "dataset_path": "data/synthetic_network_flows.csv",
+  "dataset_fingerprint_sha256": "ebe460ec7d7d6df4533c3351741a9410fa13481536ba6e70816d22f60bb6407c",
+  "isolation_forest_optimal_threshold": 0.017818406169479044,
+  "isolation_forest_metrics": {
+    "accuracy": 0.6978,
+    "precision": 0.4132,
+    "recall": 0.4596,
+    "f1": 0.4352,
+    "fpr": 0.2214,
+    "roc_auc": 0.7094,
+    "tp": 131,
+    "fp": 186,
+    "tn": 654,
+    "fn": 154,
+    "confusion_matrix": [
+      [
+        654,
+        186
+      ],
+      [
+        154,
+        131
+      ]
+    ]
+  },
+  "supervised_rf_metrics": {
+    "accuracy": 1.0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0,
+    "fpr": 0.0,
+    "roc_auc": 1.0,
+    "tp": 285,
+    "fp": 0,
+    "tn": 840,
+    "fn": 0,
+    "confusion_matrix": [
+      [
+        840,
+        0
+      ],
+      [
+        0,
+        285
+      ]
+    ]
+  },
+  "scenario_evaluation": [
+    {
+      "Scenario": "benign_large_transfer",
+      "Ground_Truth": "Benign",
+      "Total_Test_Samples": 90,
+      "Isolation_Forest_Detections": 81,
+      "Isolation_Forest_Rate": 0.9,
+      "Random_Forest_Detections": 0,
+      "Random_Forest_Rate": 0.0
+    },
+    {
+      "Scenario": "brute_force",
+      "Ground_Truth": "Malicious",
+      "Total_Test_Samples": 90,
+      "Isolation_Forest_Detections": 0,
+      "Isolation_Forest_Rate": 0.0,
+      "Random_Forest_Detections": 90,
+      "Random_Forest_Rate": 1.0
+    },
+    {
+      "Scenario": "connection_flood",
+      "Ground_Truth": "Malicious",
+      "Total_Test_Samples": 75,
+      "Isolation_Forest_Detections": 71,
+      "Isolation_Forest_Rate": 0.9467,
+      "Random_Forest_Detections": 75,
+      "Random_Forest_Rate": 1.0
+    },
+    {
+      "Scenario": "normal_browsing",
+      "Ground_Truth": "Benign",
+      "Total_Test_Samples": 750,
+      "Isolation_Forest_Detections": 105,
+      "Isolation_Forest_Rate": 0.14,
+      "Random_Forest_Detections": 0,
+      "Random_Forest_Rate": 0.0
+    },
+    {
+      "Scenario": "port_scan",
+      "Ground_Truth": "Malicious",
+      "Total_Test_Samples": 120,
+      "Isolation_Forest_Detections": 60,
+      "Isolation_Forest_Rate": 0.5,
+      "Random_Forest_Detections": 120,
+      "Random_Forest_Rate": 1.0
+    }
+  ],
+  "synthetic_limitations": "Trained on controlled synthetic network flow distributions. Synthetic flows provide verified ground truth for port scans, connection floods, and brute force, but may not encapsulate all subtle, encrypted, or zero-day protocol anomalies in diverse enterprise environments."
+}

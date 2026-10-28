@@ -1,0 +1,231 @@
+# ==============================================================================
+# SentinelAI — Enterprise Cybersecurity Platform Docker Compose
+# Orchestrates FastAPI backend, Streamlit dashboard, and telemetry agent
+# with shared volume persistence, health checks, and secure networking.
+# ==============================================================================
+
+version: "3.8"
+
+services:
+  # ----------------------------------------------------------------------------
+  # 1. FastAPI Ingestion & Application Backend Service
+  # ----------------------------------------------------------------------------
+  api:
+    build:
+      context: .
+      target: api
+    container_name: sentinel-api
+    ports:
+      - "${API_PORT:-8000}:8000"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+      - SENTINEL_DB_PATH=/app/data/sentinel.db
+      - SENTINEL_MODEL_DIR=/app/models
+      - SENTINEL_AGENT_SECRET=${SENTINEL_AGENT_SECRET:-sentinel-agent-secret-token-change-in-prod}
+      - SENTINEL_ADMIN_KEY=${SENTINEL_ADMIN_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:8501,http://127.0.0.1:8501,http://localhost:8000,http://127.0.0.1:8000}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://sentinel:sentinel_secret@db:5432/sentinel_db}
+    depends_on:
+      redis:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    volumes:
+      - sentinel_data:/app/data
+      - sentinel_models:/app/models
+    networks:
+      - sentinel-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ----------------------------------------------------------------------------
+  # 2. Streamlit Security Operations Dashboard Service
+  # ----------------------------------------------------------------------------
+  dashboard:
+    build:
+      context: .
+      target: dashboard
+    container_name: sentinel-dashboard
+    ports:
+      - "${DASHBOARD_PORT:-8501}:8501"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - API_BASE_URL=http://api:8000
+      - SENTINEL_DB_PATH=/app/data/sentinel.db
+      - SENTINEL_MODEL_DIR=/app/models
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://sentinel:sentinel_secret@db:5432/sentinel_db}
+    depends_on:
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - sentinel_data:/app/data
+      - sentinel_models:/app/models
+    networks:
+      - sentinel-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8501/_stcore/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ----------------------------------------------------------------------------
+  # 3. Endpoint Telemetry Collector Agent (Synthetic Demo Collector)
+  # ----------------------------------------------------------------------------
+  agent:
+    build:
+      context: .
+      target: agent
+    container_name: sentinel-agent
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - SENTINEL_API_URL=http://api:8000
+      - SENTINEL_AGENT_SECRET=${SENTINEL_AGENT_SECRET:-sentinel-agent-secret-token-change-in-prod}
+      - AGENT_MODE=synthetic
+      - AGENT_INTERVAL=${AGENT_INTERVAL:-15}
+      - AGENT_HOST_ID=${AGENT_HOST_ID:-sentinel-docker-agent}
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - sentinel-net
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+  # ----------------------------------------------------------------------------
+  # 4. Detection & Flow Aggregation Redis Worker
+  # ----------------------------------------------------------------------------
+  worker:
+    build:
+      context: .
+      target: worker
+    container_name: sentinel-worker
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://sentinel:sentinel_secret@db:5432/sentinel_db}
+      - SENTINEL_DB_PATH=/app/data/sentinel.db
+      - SENTINEL_MODEL_DIR=/app/models
+      - SENTINEL_AGENT_SECRET=${SENTINEL_AGENT_SECRET:-sentinel-agent-secret-token-change-in-prod}
+    depends_on:
+      redis:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    volumes:
+      - sentinel_data:/app/data
+      - sentinel_models:/app/models
+    networks:
+      - sentinel-net
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ----------------------------------------------------------------------------
+  # 5. Redis Stream Messaging Broker
+  # ----------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: sentinel-redis
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - sentinel_redis:/data
+    networks:
+      - sentinel-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  # ----------------------------------------------------------------------------
+  # 6. PostgreSQL Enterprise Event & Alert Persistence Database
+  # ----------------------------------------------------------------------------
+  db:
+    image: postgres:16-alpine
+    container_name: sentinel-postgres
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-sentinel}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-sentinel_secret}
+      - POSTGRES_DB=${POSTGRES_DB:-sentinel_db}
+    volumes:
+      - sentinel_pgdata:/var/lib/postgresql/data
+    networks:
+      - sentinel-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sentinel -d sentinel_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+# ------------------------------------------------------------------------------
+# Persistent Storage Volumes
+# ------------------------------------------------------------------------------
+volumes:
+  # SQLite database storage (sentinel.db, WAL logs, audit records)
+  sentinel_data:
+    name: sentinel_data
+  # Serialized Machine Learning models and registry
+  sentinel_models:
+    name: sentinel_models
+  # Redis stream buffer persistence
+  sentinel_redis:
+    name: sentinel_redis
+  # PostgreSQL enterprise relational storage
+  sentinel_pgdata:
+    name: sentinel_pgdata
+
+# ------------------------------------------------------------------------------
+# Dedicated Internal Bridge Network
+# ------------------------------------------------------------------------------
+networks:
+  sentinel-net:
+    name: sentinel-net
+    driver: bridge
+

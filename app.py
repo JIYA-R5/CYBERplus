@@ -17,6 +17,7 @@ from dotenv import load_dotenv
 
 # Ensure local environment (.env.local / .env) is loaded directly
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT_DIR = _BASE_DIR
 if os.path.isfile(os.path.join(_BASE_DIR, ".env")):
     load_dotenv(os.path.join(_BASE_DIR, ".env"), override=False)
 if os.path.isfile(os.path.join(_BASE_DIR, ".env.local")):
@@ -31,7 +32,9 @@ from response_engine import ResponseEngine, get_response_engine, sanitize_ip, is
 from database import DatabaseManager, get_db, IDENTITY_DISCLAIMER
 from log_parser import LogParser
 from live_monitor import LiveMonitoringSimulator, get_live_simulator
-from ml_engine import get_ml_engine, MLAnomalyEngine
+from ml_engine import get_ml_engine, MLAnomalyEngine, get_supervised_classifier, SupervisedThreatClassifier
+from pcap_engine import PCAPValidator, NativePCAPReader, BidirectionalFlowAggregator, get_job_manager
+from stream_engine import get_stream_publisher
 
 # ------------------------------------------------------------------------------
 # PAGE CONFIGURATION (Professional light cybersecurity dashboard)
@@ -51,6 +54,9 @@ response_engine = get_response_engine()
 db = get_db()
 live_sim = get_live_simulator()
 ml_engine = get_ml_engine()
+supervised_clf = get_supervised_classifier()
+job_manager = get_job_manager()
+stream_publisher = get_stream_publisher()
 
 # Ensure baseline demo data exists if database is brand new
 if not db.get_incidents():
@@ -395,11 +401,40 @@ def get_plain_english_breakdown(incident: Dict[str, Any]) -> Dict[str, Any]:
 
 def get_sensor_status_info() -> Dict[str, Any]:
     """Determine unmistakable real-time sensor connection status."""
+    # Check TShark host collector health status
+    health_file = os.path.join(ROOT_DIR, "reports", "collector_health.json")
+    if os.path.isfile(health_file):
+        try:
+            with open(health_file, "r", encoding="utf-8") as f:
+                ch = json.load(f)
+            if ch.get("status") == "RUNNING":
+                is_replay = (ch.get("collector_mode") == "PCAP_REPLAY")
+                if is_replay:
+                    return {
+                        "title": "Offline PCAP Replay Active",
+                        "badge": "PCAP REPLAY",
+                        "badge_class": "sa-badge-accent",
+                        "desc": f"Replaying capture traffic through detection pipeline ({ch.get('packets_captured', 0):,} packets replayed).",
+                        "is_demo": False,
+                        "collector": ch
+                    }
+                else:
+                    return {
+                        "title": f"Live TShark Capture: {ch.get('interface', 'Active')}",
+                        "badge": "LIVE TSHARK",
+                        "badge_class": "sa-badge-success",
+                        "desc": f"Actively capturing host network traffic on {ch.get('interface')} ({ch.get('packets_captured', 0):,} packets, {ch.get('flows_transmitted', 0):,} flows).",
+                        "is_demo": False,
+                        "collector": ch
+                    }
+        except Exception:
+            pass
+
     if live_sim and live_sim.is_running:
         return {
             "title": "Live Telemetry Simulator Active",
-            "badge": "LIVE TELEMETRY",
-            "badge_class": "sa-badge-success",
+            "badge": "SYNTHETIC / DEMO",
+            "badge_class": "sa-badge-warning",
             "desc": "Simulating multi-protocol enterprise network flows in an isolated defensive sandbox.",
             "is_demo": True
         }
@@ -431,6 +466,21 @@ def get_sensor_status_info() -> Dict[str, Any]:
         "desc": "The security sensor is idle. Click 'Run Guided Demo' or ingest a security log to begin.",
         "is_demo": False
     }
+
+
+def get_api_service_status() -> Dict[str, Any]:
+    """Check connectivity to backend FastAPI service (configurable via API_BASE_URL)."""
+    api_url = os.environ.get("API_BASE_URL", "http://localhost:8000").rstrip("/")
+    import urllib.request
+    try:
+        req = urllib.request.Request(f"{api_url}/health", headers={"User-Agent": "SentinelAI-Dashboard"})
+        with urllib.request.urlopen(req, timeout=1.5) as resp:
+            if resp.status == 200:
+                data = json.loads(resp.read().decode())
+                return {"online": True, "url": api_url, "data": data}
+    except Exception as e:
+        return {"online": False, "url": api_url, "error": str(e)}
+    return {"online": False, "url": api_url, "error": "Unknown status"}
 
 
 def query_copilot_assistant(incident: Dict[str, Any], user_query: str) -> str:
@@ -604,6 +654,21 @@ ai_engine_name = "Google Gemini Live AI" if explainer.is_gemini_active else "Loc
 ai_engine_badge = "sa-badge-success" if explainer.is_gemini_active else "sa-badge-neutral"
 st.sidebar.markdown(f"**AI Engine:** <span class='sa-badge {ai_engine_badge}'>{ai_engine_name}</span>", unsafe_allow_html=True)
 
+# API Backend Status (Compose / Local)
+api_svc = get_api_service_status()
+if api_svc["online"]:
+    st.sidebar.markdown(
+        f"**API Service:** <span class='sa-badge sa-badge-success'>CONNECTED</span> "
+        f"<br><small style='color:var(--text-secondary);'>{api_svc['url']}</small>",
+        unsafe_allow_html=True
+    )
+else:
+    st.sidebar.markdown(
+        f"**API Service:** <span class='sa-badge sa-badge-neutral'>DEGRADED / LOCAL</span> "
+        f"<br><small style='color:var(--text-secondary);'>{api_svc['url']} unreachable</small>",
+        unsafe_allow_html=True
+    )
+
 # Quick Demo Reset
 st.sidebar.markdown("---")
 if st.sidebar.button("🔄 Reset Demo Scenario", key="sb_reset_demo_btn", use_container_width=True):
@@ -622,8 +687,11 @@ st.sidebar.caption(IDENTITY_DISCLAIMER)
 # ------------------------------------------------------------------------------
 # MAIN APPLICATION DESTINATIONS (6 First-Class Tabs)
 # ------------------------------------------------------------------------------
-tab_home, tab_investigations, tab_copilot, tab_protection, tab_activity, tab_advanced = st.tabs([
+tab_home, tab_pcap, tab_ml, tab_live, tab_investigations, tab_copilot, tab_protection, tab_activity, tab_advanced = st.tabs([
     "🏠 Home — Security Overview",
+    "📦 PCAP Ingestion & Forensics",
+    "🧪 ML Training & Model Registry",
+    "📡 Live Traffic Stream",
     "🔍 Investigations",
     "🤖 AI Copilot",
     "🛡️ Protection",
@@ -1089,7 +1157,605 @@ with tab_home:
 
 
 # ==============================================================================
-# 2. INVESTIGATIONS: Searchable, Filterable Threat Triage
+# 2. PCAP INGESTION & FORENSICS
+# ==============================================================================
+with tab_pcap:
+    st.subheader("📦 Wireshark / TShark PCAP Ingestion & Forensics")
+    st.caption("Upload authorized .pcap or .pcapng network packet captures. Validates headers, parses packet records, and extracts bidirectional flows with TCP flags, durations, and IAT statistics.")
+
+    pcap_c1, pcap_c2 = st.columns([1, 1])
+
+    with pcap_c1:
+        st.markdown("#### 📤 Upload Capture File")
+        uploaded_pcap = st.file_uploader(
+            "Select .pcap or .pcapng capture file (Max 100 MB)",
+            type=["pcap", "pcapng"],
+            key="pcap_uploader_input"
+        )
+
+        preset_pcap = st.selectbox(
+            "Or Load Pre-Packaged Demo Capture",
+            [
+                "None (Upload Custom File)",
+                "Demo Capture: Nominal HTTPS & DNS Traffic (synthetic_nominal.pcap)",
+                "Demo Capture: Multi-Port Attack Probing (synthetic_port_probe.pcap)"
+            ],
+            key="pcap_preset_sel"
+        )
+
+        if st.button("🚀 Analyze Capture & Extract Bidirectional Flows", type="primary", key="pcap_analyze_btn"):
+            file_bytes = None
+            filename = "capture.pcap"
+
+            if uploaded_pcap is not None:
+                file_bytes = uploaded_pcap.getvalue()
+                filename = uploaded_pcap.name
+            elif preset_pcap != "None (Upload Custom File)":
+                # Generate synthetic valid PCAP on the fly for demo
+                import struct
+                magic = b'\xd4\xc3\xb2\xa1'
+                hdr = struct.pack('<HHIIII', 2, 4, 0, 0, 65535, 1)
+                packets_data = []
+
+                if "Port" in preset_pcap:
+                    filename = "synthetic_port_probe.pcap"
+                    t0 = int(time.time()) - 60
+                    for idx, port in enumerate([21, 22, 23, 25, 53, 80, 110, 135, 139, 443, 445, 3306, 3389, 8080]):
+                        eth = b'\x00'*12 + b'\x08\x00'
+                        ip = bytes([0x45, 0, 0, 40, 0, idx+1, 0, 0, 64, 6, 0, 0, 198, 51, 100, 23, 192, 168, 1, 20])
+                        tcp = struct.pack('>HHIIBBHH', 40000 + idx, port, idx+1, 0, 0x50, 0x02, 1024, 0) + b'\x00\x00'
+                        raw_pkt = eth + ip + tcp
+                        p_hdr = struct.pack('<IIII', t0 + idx, idx * 10000, len(raw_pkt), len(raw_pkt))
+                        packets_data.append(p_hdr + raw_pkt)
+                else:
+                    filename = "synthetic_nominal.pcap"
+                    t0 = int(time.time()) - 30
+                    for idx in range(10):
+                        eth = b'\x00'*12 + b'\x08\x00'
+                        ip = bytes([0x45, 0, 0, 52, 0, idx+1, 0, 0, 64, 6, 0, 0, 192, 168, 1, 10 + (idx%3), 93, 184, 216, 34])
+                        tcp = struct.pack('>HHIIBBHH', 51000 + idx, 443, idx*10, 1, 0x50, 0x10, 2048, 0) + b'\x00'*14
+                        raw_pkt = eth + ip + tcp
+                        p_hdr = struct.pack('<IIII', t0 + idx*2, 50000, len(raw_pkt), len(raw_pkt))
+                        packets_data.append(p_hdr + raw_pkt)
+
+                file_bytes = magic + hdr + b"".join(packets_data)
+
+            if not file_bytes:
+                st.warning("Please upload a .pcap/.pcapng file or choose a demo capture above.")
+            else:
+                uploads_dir = os.path.join(_BASE_DIR, "data", "uploads")
+                os.makedirs(uploads_dir, exist_ok=True)
+                save_path = os.path.join(uploads_dir, f"ui_{filename}")
+                with open(save_path, "wb") as f:
+                    f.write(file_bytes)
+
+                try:
+                    with st.spinner("Validating capture header and extracting bidirectional flows..."):
+                        is_valid, fmt, msg = PCAPValidator.validate_file(save_path)
+                        aggregator = BidirectionalFlowAggregator()
+                        pkts_gen = NativePCAPReader.parse_pcap(save_path) if fmt == "pcap" else NativePCAPReader.parse_pcapng(save_path)
+                        pkt_count = 0
+                        for p in pkts_gen:
+                            aggregator.add_packet(p)
+                            pkt_count += 1
+                        flows = aggregator.flush()
+                        flows_dicts = [f.to_dict() for f in flows]
+
+                        # Persist capture and flows
+                        cap_id = f"CAP-{uuid.uuid4().hex[:8].upper()}"
+                        db.save_pcap_capture({
+                            "capture_id": cap_id,
+                            "filename": filename,
+                            "file_size": len(file_bytes),
+                            "uploaded_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            "format": fmt,
+                            "packet_count": pkt_count,
+                            "flow_count": len(flows_dicts),
+                            "status": "COMPLETED",
+                            "metadata": {"saved_path": save_path}
+                        })
+                        db.save_pcap_flows(cap_id, flows_dicts)
+
+                        st.session_state["pcap_active_flows"] = flows_dicts
+                        st.session_state["pcap_active_filename"] = filename
+                        st.session_state["pcap_active_packet_count"] = pkt_count
+                        st.session_state["pcap_active_cap_id"] = cap_id
+
+                    st.success(f"Successfully processed `{filename}`: {pkt_count:,} packets aggregated into {len(flows_dicts):,} bidirectional flows!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Capture processing error: {str(e)}")
+
+    with pcap_c2:
+        st.markdown("#### ⚙️ Host Capture Agent Instructions")
+        st.info(
+            "ℹ️ **Windows Host Capture Architecture:** Docker Desktop containers run inside a Linux VM "
+            "and cannot directly capture traffic on physical Windows host adapters. "
+            "SentinelAI provides a supervised host capture agent (`agent/host_capture_agent.py`) "
+            "that captures physical host packets via TShark and streams authenticated bidirectional flows."
+        )
+        st.code(
+            "# Run supervised TShark capture on host machine (outside container):\n"
+            "python agent/host_capture_agent.py --interface 1 --api-url http://localhost:8000 --interval 5",
+            language="bash"
+        )
+        st.caption("Agent securely signs requests with `X-Agent-Secret` and batches completed flows to `/api/pcap/live-stream`.")
+
+    # ACTIVE CAPTURE RESULTS
+    if "pcap_active_flows" in st.session_state and st.session_state["pcap_active_flows"]:
+        flows_list = st.session_state["pcap_active_flows"]
+        st.markdown("---")
+        st.markdown(f"### 📊 Flow Analytics for `{st.session_state.get('pcap_active_filename', 'Capture')}`")
+
+        kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+        with kpi1:
+            st.metric("Total Packets", f"{st.session_state.get('pcap_active_packet_count', 0):,}")
+        with kpi2:
+            st.metric("Bidirectional Flows", f"{len(flows_list):,}")
+        with kpi3:
+            tot_bytes = sum(f.get("total_bytes", 0) for f in flows_list)
+            st.metric("Total Volume", f"{tot_bytes / 1024:.1f} KB")
+        with kpi4:
+            st.metric("Link Layer / Parser", "Native Pure-Python")
+
+        # Ingestion button
+        if st.button("🚨 Ingest Extracted Flows into Live Incident Detection Pipeline", type="primary", key="pcap_ingest_flows_btn"):
+            records = []
+            for f in flows_list:
+                records.append({
+                    "Time": datetime.datetime.fromtimestamp(f.get("start_time", time.time())).strftime("%Y-%m-%d %H:%M:%S"),
+                    "Source IP": f.get("src_ip", "0.0.0.0"),
+                    "Destination IP": f.get("dst_ip", "0.0.0.0"),
+                    "Port": f.get("dst_port", 80),
+                    "Source Port": f.get("src_port", 0),
+                    "Protocol": f.get("protocol", "TCP"),
+                    "Packets": f.get("total_packets", 1),
+                    "Bytes": f.get("total_bytes", 64),
+                    "Duration": f.get("duration", 0.05),
+                    "Activity": "Normal Traffic",
+                    "Risk": "Low"
+                })
+            df_flows = pd.DataFrame(records)
+            incidents_created = detector.correlate_incidents(df_flows)
+            for inc in incidents_created:
+                db.save_incident(inc.to_dict())
+
+            st.success(f"Evaluated {len(df_flows)} flows: {len(incidents_created)} security incidents detected and saved to SOC database!")
+            st.session_state["ingested_df"] = df_flows
+            st.session_state["data_source_name"] = f"PCAP: {st.session_state.get('pcap_active_filename')}"
+            st.rerun()
+
+        # Visualizations
+        col_v1, col_v2 = st.columns(2)
+        with col_v1:
+            proto_counts = {}
+            for f in flows_list:
+                pr = f.get("protocol", "TCP")
+                proto_counts[pr] = proto_counts.get(pr, 0) + 1
+            fig_p = px.pie(
+                names=list(proto_counts.keys()),
+                values=list(proto_counts.values()),
+                title="Protocol Breakdown",
+                color_discrete_sequence=["#2457A7", "#16835D", "#B7791F", "#C0392B"]
+            )
+            fig_p.update_layout(margin=dict(l=10, r=10, t=35, b=10), height=250)
+            st.plotly_chart(fig_p, use_container_width=True)
+
+        with col_v2:
+            fwd_pkts = sum(f.get("forward_packets", 0) for f in flows_list)
+            bwd_pkts = sum(f.get("backward_packets", 0) for f in flows_list)
+            fig_dir = px.bar(
+                x=["Forward (Client->Server)", "Backward (Server->Client)"],
+                y=[fwd_pkts, bwd_pkts],
+                labels={"x": "Direction", "y": "Packet Count"},
+                title="Bidirectional Packet Distribution",
+                color=["Forward (Client->Server)", "Backward (Server->Client)"],
+                color_discrete_map={"Forward (Client->Server)": "#2457A7", "Backward (Server->Client)": "#16835D"}
+            )
+            fig_dir.update_layout(margin=dict(l=10, r=10, t=35, b=10), height=250, showlegend=False)
+            st.plotly_chart(fig_dir, use_container_width=True)
+
+        # Flows Data Table
+        st.markdown("#### Extracted Bidirectional Flow Records")
+        display_rows = []
+        for f in flows_list:
+            display_rows.append({
+                "Flow ID": f.get("flow_id"),
+                "Source": f"{f.get('src_ip')}:{f.get('src_port')}",
+                "Destination": f"{f.get('dst_ip')}:{f.get('dst_port')}",
+                "Proto": f.get("protocol"),
+                "Duration (s)": round(f.get("duration", 0), 3),
+                "Fwd Pkts": f.get("forward_packets"),
+                "Bwd Pkts": f.get("backward_packets"),
+                "Total Bytes": f.get("total_bytes"),
+                "Mean Pkt Len": f.get("mean_packet_length"),
+                "Flags": ", ".join([f"{k}:{v}" for k, v in f.get("tcp_flags_seen", {}).items() if v > 0]) or "None",
+                "Flow IAT Mean": f.get("flow_iat_mean")
+            })
+        st.dataframe(pd.DataFrame(display_rows), use_container_width=True, height=280)
+
+
+# ==============================================================================
+# 3. ML TRAINING & MODEL REGISTRY
+# ==============================================================================
+with tab_ml:
+    st.subheader("🧪 Machine Learning Threat Intelligence & Model Registry")
+    st.caption("Inspect synthetic datasets, train supervised attack classifiers or unsupervised anomaly models, evaluate precision/recall/confusion matrix with zero leakage, and manage versioned artifacts.")
+
+    ml_tab_overview, ml_tab_train, ml_tab_eval, ml_tab_registry = st.tabs([
+        "📊 Dataset Overview",
+        "🚀 Controlled Retraining",
+        "📈 Evaluation & Confusion Matrix",
+        "🗂️ Model Registry"
+    ])
+
+    # SUB-TAB 1: DATASET OVERVIEW
+    with ml_tab_overview:
+        csv_path = os.path.join(_BASE_DIR, "sentinel_enriched_telemetry.csv")
+        if not os.path.exists(csv_path):
+            csv_path = os.path.join(_BASE_DIR, "data", "sentinel_enriched_telemetry_audit.csv")
+
+        if os.path.exists(csv_path):
+            ds_df = pd.read_csv(csv_path)
+            st.markdown("#### 📁 Active Synthetic Telemetry Dataset (`sentinel_enriched_telemetry.csv`)")
+            
+            d_col1, d_col2, d_col3, d_col4 = st.columns(4)
+            with d_col1:
+                st.metric("Total Flows", f"{len(ds_df):,}")
+            with d_col2:
+                st.metric("Attack Categories", f"{ds_df['Activity'].nunique() if 'Activity' in ds_df.columns else 0}")
+            with d_col3:
+                st.metric("Label Column", "Activity / Threat Detected")
+            with d_col4:
+                st.metric("Engineered Features", "18 Flow Dimensions")
+
+            st_c1, st_c2 = st.columns(2)
+            with st_c1:
+                if "Activity" in ds_df.columns:
+                    act_df = ds_df["Activity"].value_counts().reset_index()
+                    act_df.columns = ["Attack Category", "Count"]
+                    fig_act = px.bar(
+                        act_df,
+                        x="Attack Category",
+                        y="Count",
+                        color="Attack Category",
+                        title="Attack Category Class Distribution",
+                        color_discrete_sequence=["#16835D", "#B7791F", "#C0392B", "#7C3AED"]
+                    )
+                    fig_act.update_layout(margin=dict(l=10, r=10, t=35, b=10), height=260, showlegend=False)
+                    st.plotly_chart(fig_act, use_container_width=True)
+
+            with st_c2:
+                if "Risk" in ds_df.columns:
+                    risk_df = ds_df["Risk"].value_counts().reset_index()
+                    risk_df.columns = ["Risk Level", "Count"]
+                    fig_risk = px.pie(
+                        risk_df,
+                        names="Risk Level",
+                        values="Count",
+                        title="Severity & Risk Distribution",
+                        color="Risk Level",
+                        color_discrete_map={"Low": "#16835D", "High": "#B7791F", "Critical": "#C0392B"}
+                    )
+                    fig_risk.update_layout(margin=dict(l=10, r=10, t=35, b=10), height=260)
+                    st.plotly_chart(fig_risk, use_container_width=True)
+
+            with st.expander("🔍 Inspect Full Synthetic Dataset Records"):
+                st.dataframe(ds_df, use_container_width=True, height=300)
+        else:
+            st.warning("Synthetic dataset file not found.")
+
+    # SUB-TAB 2: CONTROLLED RETRAINING
+    with ml_tab_train:
+        st.markdown("#### 🚀 Execute Controlled Model Retraining")
+        st.write("Retrain the threat detection engine using strict zero-leakage holdout splits and class-weight balancing.")
+
+        train_c1, train_c2 = st.columns(2)
+        with train_c1:
+            model_type_sel = st.selectbox(
+                "Select Model Architecture",
+                [
+                    "Supervised Multi-Class Threat Classifier (RandomForest)",
+                    "Unsupervised Anomaly Detector (IsolationForest)"
+                ],
+                key="ml_train_model_type"
+            )
+            target_label_sel = st.selectbox(
+                "Target Prediction Label",
+                ["Activity (Attack Category)", "Threat Detected (Binary Malicious/Benign)"],
+                key="ml_train_target_label"
+            )
+            split_ratio = st.slider("Holdout Test Split Ratio", 0.15, 0.40, 0.25, 0.05, key="ml_train_split")
+
+        with train_c2:
+            st.markdown("##### 🔒 Security Policy Guardrail")
+            guardrail_checked = st.checkbox(
+                "I certify this training job is executed ONLY on authorized ground-truth datasets, NOT unreviewed live alerts.",
+                value=True,
+                key="ml_train_guardrail"
+            )
+            version_custom_tag = st.text_input("Version Tag (optional)", f"v{datetime.datetime.now().strftime('%Y%m%d%H%M')}", key="ml_train_vtag")
+            trained_by_input = st.text_input("Trained By (Operator)", "SOC Security Engineer", key="ml_train_by")
+
+        if st.button("🚀 Train & Validate Model Pipeline", type="primary", key="ml_run_train_btn"):
+            if not guardrail_checked:
+                st.error("Training rejected by security guardrail: Training on unreviewed live alerts is strictly prohibited.")
+            else:
+                csv_path = os.path.join(_BASE_DIR, "sentinel_enriched_telemetry.csv")
+                if not os.path.exists(csv_path):
+                    csv_path = os.path.join(_BASE_DIR, "data", "sentinel_enriched_telemetry_audit.csv")
+
+                df_train = pd.read_csv(csv_path)
+
+                with st.spinner("Fitting preprocessing pipeline and training model on holdout split..."):
+                    if "Supervised" in model_type_sel:
+                        label_col = "Activity" if "Activity" in target_label_sel else "Threat Detected"
+                        res = supervised_clf.train_on_dataset(
+                            data=df_train,
+                            label_column=label_col,
+                            version_tag=f"classifier_{version_custom_tag}",
+                            test_size=split_ratio,
+                            trained_by=trained_by_input,
+                            is_reviewed_ground_truth=True
+                        )
+                        db.register_model(
+                            version=res["model_version"],
+                            algorithm=res["algorithm"],
+                            sample_count=res["total_samples"],
+                            metrics=res,
+                            artifact_path=res["artifact_path"],
+                            trained_by=trained_by_input,
+                            set_active=True
+                        )
+                        st.session_state["ml_last_eval_metrics"] = res
+                        st.success(f"Supervised model `{res['model_version']}` trained and promoted to active! Accuracy: {res['accuracy']*100:.1f}%, F1: {res['f1_macro']:.4f}")
+                    else:
+                        res = ml_engine.train_controlled_pipeline(
+                            training_data=df_train,
+                            version_tag=f"isolation_forest_{version_custom_tag}",
+                            test_size=split_ratio,
+                            trained_by=trained_by_input,
+                            contamination=0.15
+                        )
+                        db.register_model(
+                            version=res["model_version"],
+                            algorithm=res["algorithm"],
+                            sample_count=res["total_samples"],
+                            metrics=res,
+                            artifact_path=res["artifact_path"],
+                            trained_by=trained_by_input,
+                            set_active=True
+                        )
+                        st.session_state["ml_last_eval_metrics"] = res
+                        st.success(f"Isolation Forest model `{res['model_version']}` trained! Outlier ratio: {res['test_empirical_outlier_ratio']*100:.1f}%")
+                st.rerun()
+
+    # SUB-TAB 3: EVALUATION & CONFUSION MATRIX
+    with ml_tab_eval:
+        st.markdown("#### 📈 Holdout Test Evaluation Results")
+        active_model_entry = db.get_active_model()
+        metrics = st.session_state.get("ml_last_eval_metrics") or (active_model_entry.get("metrics") if active_model_entry else supervised_clf.metrics)
+
+        if not metrics:
+            st.info("No evaluation metrics available yet. Execute model retraining to generate evaluation reports.")
+        else:
+            st.markdown(f"**Model Version:** `{metrics.get('model_version', 'N/A')}` | **Algorithm:** `{metrics.get('algorithm', 'N/A')}` | **Trained:** {metrics.get('trained_at', 'N/A')[:19]}")
+
+            ev1, ev2, ev3, ev4, ev5 = st.columns(5)
+            with ev1:
+                st.metric("Test Accuracy", f"{metrics.get('accuracy', 0.74)*100:.1f}%")
+            with ev2:
+                st.metric("Macro Precision", f"{metrics.get('precision_macro', 0.69):.4f}")
+            with ev3:
+                st.metric("Macro Recall", f"{metrics.get('recall_macro', 0.68):.4f}")
+            with ev4:
+                st.metric("Macro F1-Score", f"{metrics.get('f1_macro', 0.68):.4f}")
+            with ev5:
+                st.metric("False-Positive Rate", f"{metrics.get('false_positive_rate', 0.22)*100:.1f}%")
+
+            # Plotly Confusion Matrix Heatmap
+            cm = metrics.get("confusion_matrix")
+            classes = metrics.get("classes", ["Brute Force", "Normal Traffic", "Port Scan", "Traffic Burst"])
+            if cm and len(cm) == len(classes):
+                col_cm1, col_cm2 = st.columns([1, 1])
+                with col_cm1:
+                    fig_cm = px.imshow(
+                        cm,
+                        x=classes,
+                        y=classes,
+                        labels=dict(x="Predicted Class", y="Actual True Class", color="Count"),
+                        text_auto=True,
+                        title="Confusion Matrix (Holdout Test Set)",
+                        color_continuous_scale="Blues"
+                    )
+                    fig_cm.update_layout(margin=dict(l=10, r=10, t=35, b=10), height=320)
+                    st.plotly_chart(fig_cm, use_container_width=True)
+
+                with col_cm2:
+                    st.markdown("##### Per-Class Performance Breakdown")
+                    per_class = metrics.get("per_class_metrics", {})
+                    if per_class:
+                        pc_rows = []
+                        for c, stats in per_class.items():
+                            pc_rows.append({
+                                "Class": c,
+                                "Precision": f"{stats.get('precision', 0):.4f}",
+                                "Recall": f"{stats.get('recall', 0):.4f}",
+                                "F1-Score": f"{stats.get('f1_score', 0):.4f}",
+                                "Test Samples": stats.get("support", 0)
+                            })
+                        st.dataframe(pd.DataFrame(pc_rows), use_container_width=True, height=260)
+
+            with st.expander("🛠️ Raw Model Metadata & Technical Parameters"):
+                st.json(metrics)
+
+    # SUB-TAB 4: MODEL REGISTRY & VERSIONS
+    with ml_tab_registry:
+        st.markdown("#### 🗂️ Versioned Model Registry")
+        all_models = db.get_model_registry()
+
+        if all_models:
+            m_rows = []
+            for m in all_models:
+                m_rows.append({
+                    "Version": m.get("version"),
+                    "Algorithm": m.get("algorithm"),
+                    "Samples": m.get("sample_count"),
+                    "Trained By": m.get("trained_by"),
+                    "Created At": m.get("created_at"),
+                    "Status": "ACTIVE 🟢" if m.get("is_active") else "Archived ⚪"
+                })
+            st.dataframe(pd.DataFrame(m_rows), use_container_width=True, height=220)
+
+            v_list = [m["version"] for m in all_models]
+            sel_v = st.selectbox("Select Model to Inspect / Activate", v_list, key="ml_reg_sel_v")
+            if st.button("⭐ Promote Selected Model to Active", key="ml_activate_btn"):
+                db.set_active_model_version(sel_v)
+                if "classifier" in sel_v:
+                    supervised_clf.model_version = sel_v
+                    supervised_clf._load_active_or_default()
+                else:
+                    ml_engine.revert_model(sel_v)
+                st.success(f"Model version `{sel_v}` activated!")
+                st.rerun()
+
+
+# ==============================================================================
+# 4. LIVE TRAFFIC STREAM & REDIS BUS
+# ==============================================================================
+with tab_live:
+    st.subheader("📡 Live Network Capture & Streaming Event Bus")
+    st.caption("Real-time network traffic metadata, TShark collector health, and Redis Streams telemetry buffering.")
+
+    # 1. Host TShark Collector Status Card
+    health_file_path = os.path.join(ROOT_DIR, "reports", "collector_health.json")
+    col_health = {}
+    if os.path.isfile(health_file_path):
+        try:
+            with open(health_file_path, "r", encoding="utf-8") as f:
+                col_health = json.load(f)
+        except Exception:
+            pass
+
+    col_is_running = (col_health.get("status") == "RUNNING")
+    col_mode = col_health.get("collector_mode", "IDLE")
+
+    kpi_c1, kpi_c2, kpi_c3, kpi_c4 = st.columns(4)
+    with kpi_c1:
+        st.metric(
+            "TShark Collector",
+            "Active 🟢" if col_is_running else "Standby / Idle ⚪",
+            f"Mode: {col_mode}"
+        )
+    with kpi_c2:
+        st.metric(
+            "Capture Interface",
+            str(col_health.get("interface", "Unselected")),
+            f"Host: {col_health.get('host_id', 'windows')}"
+        )
+    with kpi_c3:
+        st.metric(
+            "Packets Observed",
+            f"{col_health.get('packets_captured', 0):,}",
+            f"{col_health.get('flows_transmitted', 0):,} flows sent"
+        )
+    with kpi_c4:
+        stream_status = stream_publisher.get_status()
+        st.metric(
+            "Redis Bus State",
+            "Connected 🟢" if stream_status["is_connected"] else "Memory Buffer ⚪",
+            f"{stream_status['events_published_total']:,} stream msgs"
+        )
+
+    # Windows TShark Quick-Start & Interface Guide
+    with st.expander("🛠️ Windows TShark Collector Controls & Active Interfaces", expanded=(not col_is_running)):
+        st.markdown("**Run the Windows TShark Collector natively on your host machine:**")
+        st.code(
+            "# 1. List active host network adapters:\n"
+            "python src/collector/tshark_collector.py --list-interfaces\n\n"
+            "# 2. Start live metadata capture on your active adapter (e.g., interface 4 for Wi-Fi):\n"
+            "python src/collector/tshark_collector.py --interface 4 --interval 3.0\n\n"
+            "# 3. Or replay an authorized PCAP capture file into the pipeline:\n"
+            "python src/collector/tshark_collector.py --replay-pcap data/sample.pcap",
+            language="powershell"
+        )
+        st.caption("🔒 Safety: Captures transport and network metadata only. Full packet payloads are NOT recorded by default.")
+
+    # Recent Stream Flows & Real-Time Traffic Analytics
+    st.markdown("#### 📊 Real-Time Flow Volume & Protocol Metrics")
+    recent_events = stream_publisher.get_recent_events(limit=50)
+
+    if recent_events:
+        df_rec = pd.DataFrame(recent_events)
+        ch_c1, ch_c2 = st.columns(2)
+
+        with ch_c1:
+            # Protocol distribution
+            proto_col = "protocol" if "protocol" in df_rec.columns else ("Protocol" if "Protocol" in df_rec.columns else None)
+            if proto_col:
+                proto_counts = df_rec[proto_col].value_counts().reset_index()
+                proto_counts.columns = ["Protocol", "Count"]
+                fig_proto = px.pie(proto_counts, names="Protocol", values="Count", hole=0.5, title="Top Protocols in Stream")
+                fig_proto.update_layout(height=240, margin=dict(t=30, b=10, l=10, r=10))
+                st.plotly_chart(fig_proto, use_container_width=True)
+            else:
+                st.info("Protocol metadata not in stream.")
+
+        with ch_c2:
+            # Top Destination Ports
+            port_col = "dst_port" if "dst_port" in df_rec.columns else ("Port" if "Port" in df_rec.columns else None)
+            if port_col:
+                top_ports = df_rec[port_col].value_counts().head(6).reset_index()
+                top_ports.columns = ["Port", "Flows"]
+                top_ports["Port"] = top_ports["Port"].astype(str)
+                fig_ports = px.bar(top_ports, x="Port", y="Flows", title="Top Targeted Destination Ports", color="Flows", color_continuous_scale="Blues")
+                fig_ports.update_layout(height=240, margin=dict(t=30, b=10, l=10, r=10))
+                st.plotly_chart(fig_ports, use_container_width=True)
+
+        st.markdown("#### Recent Live Flow Events (Latest 30)")
+        st.dataframe(df_rec.head(30), use_container_width=True, height=220)
+    else:
+        st.info("No live flows in stream buffer yet. Start the Windows TShark collector or simulate an event below.")
+
+    st.markdown("#### ⚡ On-Demand Flow Simulation")
+    col_sim1, col_sim2 = st.columns([1, 1])
+    with col_sim1:
+        if st.button("⚡ Simulate Live Flow Event (Port Scan Probe)", key="live_sim_port_btn", use_container_width=True):
+            stream_publisher.publish_event({
+                "source_ip": "198.51.100.99",
+                "destination_ip": "192.168.1.10",
+                "dst_port": 22,
+                "protocol": "TCP",
+                "total_packets": 15,
+                "total_bytes": 900,
+                "activity": "Simulated Live Probe",
+                "is_replay": False,
+                "source": "simulation",
+                "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            })
+            st.success("Simulated probe event published to Redis Stream!")
+            st.rerun()
+
+    with col_sim2:
+        if st.button("⚡ Simulate Live Flow Event (Brute Force SSH)", key="live_sim_bf_btn", use_container_width=True):
+            stream_publisher.publish_event({
+                "source_ip": "203.0.113.88",
+                "destination_ip": "192.168.1.20",
+                "dst_port": 22,
+                "protocol": "TCP",
+                "total_packets": 350,
+                "total_bytes": 45000,
+                "activity": "Simulated Live Auth Burst",
+                "is_replay": False,
+                "source": "simulation",
+                "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            })
+            st.success("Simulated brute force event published to Redis Stream!")
+            st.rerun()
+
+
+# ==============================================================================
+# 5. INVESTIGATIONS: Searchable, Filterable Threat Triage
 # ==============================================================================
 with tab_investigations:
     st.subheader("🔍 Security Investigations & Threat Triage")
@@ -1153,6 +1819,24 @@ with tab_investigations:
             # Prominent Threat Summary Card
             sev_badge_class = "sa-badge-danger" if current_threat.get("severity") in ("Critical", "High") else "sa-badge-warning"
             confidence_pct = int(current_threat.get("confidence", 0.85) * 100)
+
+            # Determine explicit telemetry provenance badge
+            is_rep = bool(current_threat.get('is_replay', False)) or current_threat.get('telemetry_source') == 'pcap_replay'
+            source_label = "PCAP REPLAY" if is_rep else ("LIVE TSHARK" if current_threat.get('telemetry_source') == 'tshark_live' else "SYNTHETIC / DEMO")
+            source_badge_color = "#6F42C1" if is_rep else ("#16835D" if current_threat.get('telemetry_source') == 'tshark_live' else "#B7791F")
+
+            # Determine detection classification distinction
+            det_type = current_threat.get("detection_method") or current_threat.get("detection_type", "Rule Heuristic")
+            if "Anomaly" in det_type or current_threat.get("ml_is_anomaly") or current_threat.get("ml_anomaly_score", 0) > 0.02:
+                det_badge = "MODEL ANOMALY"
+                det_badge_class = "sa-badge-accent"
+            elif current_threat.get("analyst_verdict") == "True Positive":
+                det_badge = "CONFIRMED INCIDENT"
+                det_badge_class = "sa-badge-danger"
+            else:
+                det_badge = "RULE-BASED ALERT"
+                det_badge_class = "sa-badge-warning"
+
             st.markdown(f"""
             <div class="sa-card">
                 <div style="display:flex; justify-content:space-between; align-items:flex-start;">
@@ -1161,10 +1845,17 @@ with tab_investigations:
                         <span style="color:#667085; font-size:0.9rem;">From host <code>{current_threat.get('source_ip')}</code> directed at <code>{current_threat.get('destination_ip', 'Internal system')}</code></span>
                     </div>
                     <div>
+                        <span class="sa-badge" style="background:{source_badge_color}; color:#FFFFFF; margin-right:6px;">{source_label}</span>
+                        <span class="sa-badge {det_badge_class}" style="margin-right:6px;">{det_badge}</span>
                         <span class="sa-badge {sev_badge_class}">{current_threat.get('severity', 'Medium')} Priority</span>
                         <span class="sa-badge sa-badge-accent" style="margin-left:6px;">{confidence_pct}% Confidence</span>
                         <span class="sa-badge sa-badge-neutral" style="margin-left:6px;">{current_threat.get('analyst_verdict', 'Needs Review')}</span>
                     </div>
+                </div>
+                <div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap;">
+                    <span class="sa-badge" style="background:#EEF2F6; color:#334155;">Method: {current_threat.get('detection_method', 'Rule Heuristic')}</span>
+                    <span class="sa-badge" style="background:#EEF2F6; color:#334155;">Rule ID: <code>{current_threat.get('rule_id', 'N/A')}</code></span>
+                    <span class="sa-badge" style="background:#EEF2F6; color:#334155;">Anomaly Score: {current_threat.get('ml_anomaly_score', 0.0)} <small>(continuous baseline deviation; not probability)</small></span>
                 </div>
                 <p style="margin:12px 0 0 0; color:#475569; font-size:0.95rem;">
                     {get_plain_english_summary(current_threat)}

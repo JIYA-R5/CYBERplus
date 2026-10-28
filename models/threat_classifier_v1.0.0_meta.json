@@ -1,0 +1,100 @@
+{
+  "model_version": "classifier_v1.0.0",
+  "algorithm": "RandomForestClassifier",
+  "model_type": "supervised_classifier",
+  "dataset_name": "sentinel_enriched_telemetry.csv",
+  "label_column": "Activity",
+  "classes": [
+    "Brute Force",
+    "Normal Traffic",
+    "Port Scan",
+    "Traffic Burst"
+  ],
+  "features_used": [
+    "packets",
+    "port",
+    "source_port",
+    "flow_duration",
+    "bytes",
+    "flow_frequency",
+    "unique_ports_contacted",
+    "mean_packets_per_flow",
+    "is_privileged_port",
+    "is_admin_port",
+    "proto_tcp",
+    "proto_udp",
+    "proto_icmp",
+    "proto_other",
+    "tcp_flag_syn",
+    "tcp_flag_rst",
+    "tcp_flag_ack",
+    "packets_per_sec",
+    "bytes_per_sec"
+  ],
+  "trained_at": "2026-10-28T19:42:16.728473",
+  "trained_by": "SOC Lead ML Engineer",
+  "total_samples": 73,
+  "train_sample_count": 54,
+  "test_sample_count": 19,
+  "accuracy": 0.7368,
+  "precision_macro": 0.6944,
+  "recall_macro": 0.675,
+  "f1_macro": 0.6842,
+  "precision_weighted": 0.7778,
+  "recall_weighted": 0.7368,
+  "f1_weighted": 0.7562,
+  "false_positive_rate": 0.2222,
+  "confusion_matrix": [
+    [
+      3,
+      0,
+      0,
+      0
+    ],
+    [
+      0,
+      7,
+      0,
+      3
+    ],
+    [
+      0,
+      0,
+      4,
+      0
+    ],
+    [
+      0,
+      2,
+      0,
+      0
+    ]
+  ],
+  "per_class_metrics": {
+    "Brute Force": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1_score": 1.0,
+      "support": 3
+    },
+    "Normal Traffic": {
+      "precision": 0.7778,
+      "recall": 0.7,
+      "f1_score": 0.7368,
+      "support": 10
+    },
+    "Port Scan": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1_score": 1.0,
+      "support": 4
+    },
+    "Traffic Burst": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1_score": 0.0,
+      "support": 2
+    }
+  },
+  "status": "VALIDATED_AND_TRAINED"
+}

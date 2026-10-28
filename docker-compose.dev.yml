@@ -1,0 +1,31 @@
+# ==============================================================================
+# SentinelAI — Local Development Compose Override
+# Enables live volume mounting for rapid development and testing
+# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+# ==============================================================================
+
+version: "3.8"
+
+services:
+  api:
+    volumes:
+      - .:/app
+      - sentinel_data:/app/data
+      - sentinel_models:/app/models
+    environment:
+      - API_RELOAD=true
+      - LOG_LEVEL=DEBUG
+
+  dashboard:
+    volumes:
+      - .:/app
+      - sentinel_data:/app/data
+      - sentinel_models:/app/models
+
+  worker:
+    volumes:
+      - .:/app
+      - sentinel_data:/app/data
+      - sentinel_models:/app/models
+    environment:
+      - LOG_LEVEL=DEBUG
