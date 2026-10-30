@@ -58,29 +58,63 @@ export const LiveNetworkPage: React.FC<LiveNetworkPageProps> = ({
       ]);
       setCollectorStatus(statusRes);
       setInterfaces(ifacesRes);
+      if (statusRes.mode || (statusRes as any).collector_mode) {
+        const raw = (statusRes.mode || (statusRes as any).collector_mode || '').toLowerCase();
+        if (raw.includes('live')) setCollectorMode('live');
+        else if (raw.includes('pcap')) setCollectorMode('pcap');
+        else if (raw.includes('sim')) setCollectorMode('simulation');
+      }
       if (ifacesRes.length > 0 && !selectedInterface) {
         const first = ifacesRes[0];
-        const firstName = typeof first === 'string' ? first : first.name;
-        setSelectedInterface(statusRes.capture_interface || (statusRes as any).interface || firstName);
+        const firstName = typeof first === 'string' ? first : (first.name || first.id || '');
+        const currentActive = statusRes.capture_interface || (statusRes as any).interface;
+        const matched = ifacesRes.find(
+          (i: any) =>
+            i.id === currentActive ||
+            i.name === currentActive ||
+            i.alias === currentActive ||
+            i.description === currentActive
+        );
+        setSelectedInterface(matched ? (matched.name || matched.id || '') : (firstName || ''));
       }
     } catch (e) {
       console.error('Failed to get collector status/interfaces', e);
     }
   };
 
+  const handleSwitchMode = async (newMode: string) => {
+    setCollectorMode(newMode);
+    if (collectorStatus?.status === 'running') {
+      try {
+        setLoadingAction(true);
+        await api.startCollector(selectedInterface, newMode, true);
+        await fetchStatusAndInterfaces();
+      } catch (err: any) {
+        alert(`Failed to switch mode: ${err.message}`);
+      } finally {
+        setLoadingAction(false);
+      }
+    }
+  };
+
   const getIfaceName = (iface: any) => {
     if (!iface) return '';
     if (typeof iface === 'string') return iface;
-    return iface.name || '';
+    return iface.name || iface.id || '';
   };
 
   const getIfaceLabel = (iface: any) => {
     if (!iface) return '';
-    if (typeof iface === 'string') return iface;
-    if (iface.description && iface.description !== iface.name) {
-      return `${iface.description} (${iface.name})`;
+    if (typeof iface === 'string') {
+      return iface.replace(/\\Device\\NPF_\{[A-Fa-f0-9-]+\}\s*/gi, '').trim() || iface;
     }
-    return iface.name || 'Network Adapter';
+    if (iface.description) {
+      return iface.description.replace(/\\Device\\NPF_\{[A-Fa-f0-9-]+\}\s*/gi, '').trim();
+    }
+    if (iface.alias && iface.ip) {
+      return `${iface.alias} (${iface.ip})`;
+    }
+    return iface.alias || iface.name || 'Network Adapter';
   };
 
   const fetchEventsFromApi = async () => {
@@ -116,7 +150,7 @@ export const LiveNetworkPage: React.FC<LiveNetworkPageProps> = ({
     setShowConfirmModal(false);
     try {
       setLoadingAction(true);
-      await api.startCollector(selectedInterface, collectorMode);
+      await api.startCollector(selectedInterface, collectorMode, true);
       await fetchStatusAndInterfaces();
     } catch (err: any) {
       alert(`Start failed: ${err.message}`);
@@ -207,6 +241,74 @@ export const LiveNetworkPage: React.FC<LiveNetworkPageProps> = ({
           </div>
         </div>
 
+        {/* Ingestion Mode Switcher Bar */}
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 p-3.5 rounded-xl bg-slate-950/90 border border-slate-800">
+          <div className="flex items-center gap-2.5">
+            <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+              Active Mode:
+            </span>
+            <span className={`text-xs font-mono font-bold px-2 py-0.5 rounded border ${
+              collectorMode === 'live'
+                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                : collectorMode === 'simulation'
+                ? 'bg-purple-500/10 text-purple-400 border-purple-500/30'
+                : 'bg-cyan-500/10 text-cyan-400 border-cyan-500/30'
+            }`}>
+              {collectorMode === 'live' ? 'LIVE HOST CAPTURE' : (collectorMode === 'simulation' ? 'SYNTHETIC SIMULATION' : 'PCAP REPLAY')}
+            </span>
+            {collectorStatus?.status === 'running' && (
+              <span className="flex items-center gap-1.5 text-[11px] font-mono text-emerald-400 ml-1">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                Capture Session Active
+              </span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => handleSwitchMode('live')}
+              disabled={loadingAction}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                collectorMode === 'live'
+                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/50 shadow-sm shadow-emerald-500/20'
+                  : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-white hover:bg-slate-800'
+              }`}
+              title="Capture real traffic from your physical host network adapter"
+            >
+              <Wifi className="w-3.5 h-3.5 text-emerald-400" />
+              <span>LIVE Host Wire</span>
+            </button>
+
+            <button
+              onClick={() => handleSwitchMode('simulation')}
+              disabled={loadingAction}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                collectorMode === 'simulation'
+                  ? 'bg-purple-500/20 text-purple-300 border border-purple-500/50 shadow-sm shadow-purple-500/20'
+                  : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-white hover:bg-slate-800'
+              }`}
+              title="Stream synthetic deterministic attack vectors and anomaly traffic"
+            >
+              <Radio className="w-3.5 h-3.5 text-purple-400" />
+              <span>Synthetic Simulation</span>
+            </button>
+
+            <button
+              onClick={() => handleSwitchMode('pcap')}
+              disabled={loadingAction}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                collectorMode === 'pcap'
+                  ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/50 shadow-sm shadow-cyan-500/20'
+                  : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-white hover:bg-slate-800'
+              }`}
+              title="Replay recorded PCAP capture file"
+            >
+              <Play className="w-3.5 h-3.5 text-cyan-400" />
+              <span>PCAP Replay</span>
+            </button>
+          </div>
+        </div>
+
         {/* Configuration Row */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div>
@@ -237,9 +339,8 @@ export const LiveNetworkPage: React.FC<LiveNetworkPageProps> = ({
             <label className="text-xs font-mono text-slate-400 block mb-1.5">Ingestion Mode</label>
             <select
               value={collectorMode}
-              onChange={(e) => setCollectorMode(e.target.value)}
-              disabled={collectorStatus?.status === 'running'}
-              className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-cyan-500 disabled:opacity-60 font-mono"
+              onChange={(e) => handleSwitchMode(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-cyan-500 font-mono"
             >
               <option value="simulation">SIMULATION (Synthetic Deterministic Traffic)</option>
               <option value="live">LIVE (Host TShark / Npcap)</option>
@@ -255,7 +356,7 @@ export const LiveNetworkPage: React.FC<LiveNetworkPageProps> = ({
                 {formatUptime(collectorStatus?.uptime_seconds || 0)}
               </span>
               <span className="text-slate-500">
-                {collectorStatus?.active_session ? 'Session Active' : 'No Session'}
+                {collectorStatus?.active_session ? `${collectorMode.toUpperCase()} Active` : 'No Session'}
               </span>
             </div>
           </div>
@@ -304,11 +405,31 @@ export const LiveNetworkPage: React.FC<LiveNetworkPageProps> = ({
       <div className="soc-card p-5 space-y-4">
         {/* Table Controls Bar */}
         <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 pb-3 border-b border-slate-800">
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <h2 className="text-sm font-bold text-white tracking-wide">Live Normalized Flow Stream</h2>
             <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
               {filteredEvents.length} Events Buffered
             </span>
+
+            {/* Visual Stream Tag */}
+            {collectorStatus?.status === 'running' ? (
+              collectorMode === 'live' ? (
+                <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 animate-pulse">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                  LIVE WIRE CAPTURE ({selectedInterface ? getIfaceLabel(interfaces.find(i => getIfaceName(i) === selectedInterface) || selectedInterface) : 'Adapter'})
+                </span>
+              ) : (
+                <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/40">
+                  <span className="w-1.5 h-1.5 rounded-full bg-purple-400"></span>
+                  SYNTHETIC SIMULATION (Test Attacks Active)
+                </span>
+              )
+            ) : (
+              <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-mono bg-slate-800 text-slate-400 border border-slate-700">
+                <span className="w-1.5 h-1.5 rounded-full bg-slate-500"></span>
+                CAPTURE STOPPED (Idle)
+              </span>
+            )}
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5">
@@ -377,6 +498,7 @@ export const LiveNetworkPage: React.FC<LiveNetworkPageProps> = ({
           <table className="w-full text-left text-xs font-mono">
             <thead className="text-slate-400 border-b border-slate-800">
               <tr>
+                <th className="pb-2.5 font-medium">Source</th>
                 <th className="pb-2.5 font-medium">Timestamp</th>
                 <th className="pb-2.5 font-medium">Source IP</th>
                 <th className="pb-2.5 font-medium">Src Port</th>
@@ -392,7 +514,7 @@ export const LiveNetworkPage: React.FC<LiveNetworkPageProps> = ({
             <tbody className="divide-y divide-slate-800 text-slate-300">
               {paginatedEvents.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="py-8 text-center text-slate-500">
+                  <td colSpan={11} className="py-8 text-center text-slate-500">
                     No packet events match current filters.
                   </td>
                 </tr>
@@ -404,6 +526,17 @@ export const LiveNetworkPage: React.FC<LiveNetworkPageProps> = ({
                       evt.is_suspicious ? 'bg-amber-500/5' : ''
                     }`}
                   >
+                    <td className="py-2.5">
+                      {evt.data_source === 'LIVE' ? (
+                        <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                          LIVE
+                        </span>
+                      ) : (
+                        <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                          SIM
+                        </span>
+                      )}
+                    </td>
                     <td className="py-2.5 text-slate-400">{new Date(evt.timestamp).toLocaleTimeString()}</td>
                     <td className="py-2.5 font-semibold text-cyan-400">{evt.src_ip}</td>
                     <td className="py-2.5 text-slate-400">{evt.src_port || '—'}</td>

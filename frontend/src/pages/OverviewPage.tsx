@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Activity,
   ShieldAlert,
@@ -9,6 +10,9 @@ import {
   HardDrive,
   CheckCircle2,
   AlertTriangle,
+  Globe,
+  ArrowRight,
+  MapPin,
 } from 'lucide-react';
 import {
   AreaChart,
@@ -58,6 +62,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
   onSelectHost,
   onNavigateToAlerts,
 }) => {
+  const navigate = useNavigate();
   const [summary, setSummary] = useState<MetricsSummary | null>(null);
   const [timeline, setTimeline] = useState<TimelineDataPoint[]>([]);
   const [protocols, setProtocols] = useState<ProtocolStat[]>([]);
@@ -210,6 +215,34 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
           onClick={() => onNavigateToAlerts && onNavigateToAlerts()}
           loading={loading}
         />
+      </div>
+
+      {/* Threat Intelligence Quick Access Banner */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-4 rounded-xl bg-gradient-to-r from-cyan-950/40 via-slate-900/80 to-blue-950/40 border border-cyan-500/30 gap-4 shadow-lg shadow-cyan-950/20">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-400 shrink-0 shadow-[0_0_12px_rgba(6,182,212,0.3)]">
+            <Globe className="w-5 h-5 animate-pulse" />
+          </div>
+          <div>
+            <h3 className="text-sm font-bold text-white flex items-center gap-2">
+              Global Threat Intelligence Heat Map
+              <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-cyan-500/20 text-cyan-300 border border-cyan-500/40">
+                MaxMind GeoLite2
+              </span>
+            </h3>
+            <p className="text-xs text-slate-400 mt-0.5">
+              Live geographic mapping of public threat origins, local RFC 1918 network topology, and deep source IP provenance.
+            </p>
+          </div>
+        </div>
+
+        <button
+          onClick={() => navigate('/threat-intelligence')}
+          className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold bg-cyan-500 hover:bg-cyan-400 text-slate-950 shadow-md shadow-cyan-500/20 transition-all shrink-0 cursor-pointer"
+        >
+          <span>Open Threat Heat Map</span>
+          <ArrowRight className="w-3.5 h-3.5" />
+        </button>
       </div>
 
       {/* Row 2: Traffic Volume Timeline & Protocol Breakdown */}

@@ -10,6 +10,9 @@ import {
   HostInfo,
   ModelMetadata,
   ResponseAction,
+  ThreatMapData,
+  IpIntelligence,
+  CopilotExplanation,
 } from '../types';
 
 const API_BASE = '/api';
@@ -42,11 +45,11 @@ export const api = {
     return data.interfaces || [];
   },
 
-  async startCollector(interfaceName?: string, mode?: string): Promise<{ status: string; message: string }> {
+  async startCollector(interfaceName?: string, mode?: string, force: boolean = true): Promise<{ status: string; message: string }> {
     const res = await fetch(`${API_BASE}/collector/start`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ interface: interfaceName, mode }),
+      body: JSON.stringify({ interface: interfaceName, mode, force }),
     });
     return handleResponse(res);
   },
@@ -169,4 +172,33 @@ export const api = {
     });
     return handleResponse(res);
   },
+
+  // Threat Intelligence & GeoIP
+  async getThreatMap(params?: { severity?: string; category?: string; country?: string; timeRange?: string }): Promise<ThreatMapData> {
+    const query = new URLSearchParams();
+    if (params?.severity && params.severity !== 'All') query.append('severity', params.severity);
+    if (params?.category && params.category !== 'All') query.append('category', params.category);
+    if (params?.country && params.country !== 'All') query.append('country', params.country);
+    if (params?.timeRange) query.append('time_range', params.timeRange);
+    const qs = query.toString() ? `?${query.toString()}` : '';
+    const res = await fetch(`${API_BASE}/threat-map${qs}`);
+    return handleResponse<ThreatMapData>(res);
+  },
+
+  async lookupIp(ip: string): Promise<{ status: string; ip: string; intelligence: IpIntelligence; recent_flows_count: number; related_incidents_count: number; recent_flows: any[]; incidents: any[] }> {
+    const res = await fetch(`${API_BASE}/threat-map/ip-lookup?ip=${encodeURIComponent(ip)}`);
+    return handleResponse(res);
+  },
+
+  // Gemini Security Copilot
+  async getCopilotExplanation(incidentId: string): Promise<{ status: string; explanation: CopilotExplanation; incident: any; safe_recommendations?: any }> {
+    const res = await fetch(`${API_BASE}/copilot/explain/${encodeURIComponent(incidentId)}`);
+    return handleResponse(res);
+  },
+
+  async getCopilotSummary(): Promise<{ status: string; gemini_active: boolean; provider: string; summary: string; total_incidents: number }> {
+    const res = await fetch(`${API_BASE}/copilot/summary`);
+    return handleResponse(res);
+  },
 };
+

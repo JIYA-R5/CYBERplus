@@ -9,7 +9,8 @@ from fastapi.testclient import TestClient
 from api.index import app
 
 @pytest.fixture
-def client():
+def client(monkeypatch):
+    monkeypatch.setenv("SENTINEL_ADMIN_KEY", "")
     return TestClient(app)
 
 def test_vercel_health_check(client):

@@ -38,3 +38,10 @@ data/uploads/
 *.db-wal
 *.db-shm
 
+# MaxMind GeoIP Databases (Do not commit large binary databases)
+*.mmdb
+data/*.mmdb
+data/GeoLite2-City.mmdb
+.env
+
+

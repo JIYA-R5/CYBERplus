@@ -10,9 +10,17 @@ import {
   Save,
   Check,
   Terminal,
+  Bot,
+  BrainCircuit,
+  MapPin,
+  Globe,
+  Sparkles,
+  AlertTriangle,
+  Lightbulb,
+  CheckCircle2,
 } from 'lucide-react';
 import { api } from '../services/api';
-import { SecurityAlert, NetworkEvent } from '../types';
+import { SecurityAlert, NetworkEvent, CopilotExplanation, IpIntelligence } from '../types';
 import { SeverityBadge } from '../components/common/SeverityBadge';
 
 export const InvestigationPage: React.FC = () => {
@@ -22,6 +30,11 @@ export const InvestigationPage: React.FC = () => {
   const [investigationNotes, setInvestigationNotes] = useState<string>('');
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
+
+  // Gemini Copilot & GeoIP states
+  const [copilotExp, setCopilotExp] = useState<CopilotExplanation | null>(null);
+  const [copilotLoading, setCopilotLoading] = useState<boolean>(false);
+  const [sourceGeo, setSourceGeo] = useState<IpIntelligence | null>(null);
 
   useEffect(() => {
     const fetchAlerts = async () => {
@@ -44,11 +57,40 @@ export const InvestigationPage: React.FC = () => {
   const handleSelectAlert = async (alert: SecurityAlert) => {
     setSelectedAlert(alert);
     setSaveStatus(null);
+    setCopilotExp(null);
+    setSourceGeo(null);
+
+    // Fetch related packet traces
     try {
       const full = await api.getAlert(alert.alert_id);
       setRelatedEvents(full.related_events || []);
     } catch {
       setRelatedEvents([]);
+    }
+
+    // Fetch live Gemini AI copilot explanation
+    try {
+      setCopilotLoading(true);
+      const res = await api.getCopilotExplanation(alert.alert_id);
+      if (res.explanation) {
+        setCopilotExp(res.explanation);
+      }
+    } catch (err) {
+      console.debug('Copilot explain query fallback:', err);
+    } finally {
+      setCopilotLoading(false);
+    }
+
+    // Fetch live MaxMind GeoIP resolution for source IP
+    if (alert.src_ip) {
+      try {
+        const geoRes = await api.lookupIp(alert.src_ip);
+        if (geoRes.intelligence) {
+          setSourceGeo(geoRes.intelligence);
+        }
+      } catch (err) {
+        console.debug('GeoIP lookup error:', err);
+      }
     }
   };
 
@@ -204,10 +246,132 @@ export const InvestigationPage: React.FC = () => {
                   </div>
                 </div>
 
+                {/* GeoIP Source Provenance Bar */}
+                {sourceGeo && (
+                  <div className="flex flex-wrap items-center gap-2 p-2.5 rounded-lg bg-[#0E1525] border border-slate-800 text-xs font-mono">
+                    <span className="text-slate-400 flex items-center gap-1">
+                      <Globe className="w-3.5 h-3.5 text-cyan-400" />
+                      Origin:
+                    </span>
+                    <span className="text-white font-bold">
+                      {sourceGeo.city ? `${sourceGeo.city}, ` : ''}{sourceGeo.country || 'Unknown'} ({sourceGeo.country_code || 'XX'})
+                    </span>
+                    {sourceGeo.latitude && (
+                      <span className="text-slate-400">
+                        ({sourceGeo.latitude.toFixed(2)}, {sourceGeo.longitude?.toFixed(2)})
+                      </span>
+                    )}
+                    {sourceGeo.accuracy_km && (
+                      <span className="text-slate-500 text-[10px]">
+                        &plusmn;{sourceGeo.accuracy_km}km radius
+                      </span>
+                    )}
+                    <span
+                      className={`ml-auto px-2 py-0.5 rounded text-[10px] font-bold ${
+                        sourceGeo.is_public
+                          ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                          : 'bg-purple-500/20 text-purple-400 border border-purple-500/30'
+                      }`}
+                    >
+                      {sourceGeo.is_public ? 'PUBLIC ROUTABLE' : 'PRIVATE LOCAL'}
+                    </span>
+                  </div>
+                )}
+
                 <div className="p-3 rounded-lg bg-slate-950/80 border border-slate-800 text-xs text-slate-300 leading-relaxed">
                   <strong className="text-cyan-400 block mb-1">Observed Anomaly Context:</strong>
                   {selectedAlert.explanation}
                 </div>
+              </div>
+
+              {/* Gemini AI Threat Copilot Briefing */}
+              <div className="soc-card p-5 space-y-4 border-l-4 border-l-cyan-500">
+                <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+                  <div className="flex items-center gap-2">
+                    <div className="w-7 h-7 rounded-lg bg-cyan-500/20 text-cyan-400 flex items-center justify-center">
+                      <Bot className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                        Google Gemini Security Copilot & Reasoning
+                        <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
+                      </h4>
+                      <p className="text-[10px] text-slate-400">
+                        Provider: <span className="text-cyan-300 font-mono">{copilotExp?.provider || 'Google Gemini Live AI / Local KB'}</span>
+                      </p>
+                    </div>
+                  </div>
+
+                  {copilotExp?.confidence_score !== undefined && (
+                    <div className="flex items-center gap-2 bg-slate-950 px-3 py-1 rounded-lg border border-slate-800">
+                      <span className="text-[10px] uppercase font-mono text-slate-400">Confidence:</span>
+                      <span className="font-mono text-cyan-400 font-bold text-xs">
+                        {(copilotExp.confidence_score * 100).toFixed(0)}%
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                {copilotLoading ? (
+                  <div className="py-6 text-center text-xs text-slate-400 font-mono animate-pulse">
+                    Consulting Gemini security knowledge base...
+                  </div>
+                ) : copilotExp ? (
+                  <div className="space-y-3.5 text-xs">
+                    {/* Summary */}
+                    <div>
+                      <div className="text-[10px] uppercase font-mono text-slate-500 mb-1">Executive Threat Summary</div>
+                      <p className="text-slate-200 leading-relaxed bg-slate-950/60 p-3 rounded-lg border border-slate-800/80">
+                        {copilotExp.summary}
+                      </p>
+                    </div>
+
+                    {/* Attack Mechanism */}
+                    {copilotExp.mechanism && (
+                      <div>
+                        <div className="text-[10px] uppercase font-mono text-slate-500 mb-1">Observed Technical Mechanism</div>
+                        <p className="text-slate-300 leading-relaxed font-mono text-[11px] bg-slate-950/40 p-2.5 rounded border border-slate-800/60">
+                          {copilotExp.mechanism}
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Dual Hypotheses */}
+                    {copilotExp.threat_hypotheses && (
+                      <div>
+                        <div className="text-[10px] uppercase font-mono text-slate-500 mb-1 flex items-center gap-1">
+                          <Lightbulb className="w-3 h-3 text-amber-400" />
+                          Dual Hypotheses (Threat vs Benign Operational Activity)
+                        </div>
+                        <div className="p-3 rounded-lg bg-amber-500/5 border border-amber-500/20 text-amber-200/90 text-xs leading-relaxed">
+                          {copilotExp.threat_hypotheses}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Containment Recommendations */}
+                    {copilotExp.recommended_actions && (
+                      <div>
+                        <div className="text-[10px] uppercase font-mono text-slate-500 mb-1 flex items-center gap-1">
+                          <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                          Recommended Safe Response & Containment
+                        </div>
+                        <div className="p-3 rounded-lg bg-emerald-500/5 border border-emerald-500/20 text-emerald-300/90 text-xs leading-relaxed">
+                          {copilotExp.recommended_actions}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* AI Safety Disclaimer */}
+                    <div className="text-[10px] text-slate-500 italic pt-1 border-t border-slate-800/60">
+                      {copilotExp.ai_disclaimer || 'AI guidance is advisory only. Autonomous firewall modification based solely on AI output is strictly prohibited.'}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-xs text-slate-500 italic">
+                    AI explanation not available for this incident.
+                  </div>
+                )}
               </div>
 
               {/* Observed Communication Timeline */}

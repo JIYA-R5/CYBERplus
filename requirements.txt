@@ -20,3 +20,7 @@ pydantic>=2.5.0
 redis>=5.0.0
 psycopg2-binary>=2.9.9
 
+# MaxMind GeoIP Database Reader
+maxminddb>=2.5.0
+geoip2>=5.0.0
+

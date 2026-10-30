@@ -6,11 +6,13 @@ import { OverviewPage } from './pages/OverviewPage';
 import { LiveNetworkPage } from './pages/LiveNetworkPage';
 import { TrafficAnalyticsPage } from './pages/TrafficAnalyticsPage';
 import { ThreatDetectionPage } from './pages/ThreatDetectionPage';
+import { ThreatIntelligencePage } from './pages/ThreatIntelligencePage';
 import { SecurityAlertsPage } from './pages/SecurityAlertsPage';
 import { HostsPage } from './pages/HostsPage';
 import { InvestigationPage } from './pages/InvestigationPage';
 import { ModelInsightsPage } from './pages/ModelInsightsPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { ErrorBoundary } from './components/common/ErrorBoundary';
 import { useWebSocket } from './hooks/useWebSocket';
 import { api } from './services/api';
 import { CollectorStatus, DataSource, TimeRange } from './types';
@@ -47,9 +49,10 @@ export const App: React.FC = () => {
       try {
         const status = await api.getCollectorStatus();
         setCollectorStatus(status);
-        if (status.mode === 'live') {
+        const rawMode = (status.mode || (status as any).collector_mode || '').toLowerCase();
+        if (rawMode.includes('live')) {
           setDataSource('LIVE');
-        } else if (status.mode === 'pcap') {
+        } else if (rawMode.includes('pcap')) {
           setDataSource('PCAP REPLAY');
         } else {
           setDataSource('SIMULATION');
@@ -121,62 +124,65 @@ export const App: React.FC = () => {
 
         {/* Page Content Body */}
         <main className="flex-1 p-6 mt-16 max-w-7xl w-full mx-auto">
-          <Routes>
-            <Route
-              path="/"
-              element={
-                <OverviewPage
-                  timeRange={timeRange}
-                  onSelectHost={handleSelectHost}
-                  onNavigateToAlerts={handleNavigateToAlerts}
-                />
-              }
-            />
-            <Route
-              path="/overview"
-              element={
-                <OverviewPage
-                  timeRange={timeRange}
-                  onSelectHost={handleSelectHost}
-                  onNavigateToAlerts={handleNavigateToAlerts}
-                />
-              }
-            />
-            <Route
-              path="/live-network"
-              element={
-                <LiveNetworkPage
-                  liveEvents={liveEvents}
-                  isPaused={isPaused}
-                  onTogglePause={togglePause}
-                  onSelectHost={handleSelectHost}
-                />
-              }
-            />
-            <Route
-              path="/analytics"
-              element={<TrafficAnalyticsPage timeRange={timeRange} />}
-            />
-            <Route path="/threats" element={<ThreatDetectionPage />} />
-            <Route path="/alerts" element={<SecurityAlertsPage />} />
-            <Route
-              path="/hosts"
-              element={<HostsPage initialHostIp={selectedHostIp} />}
-            />
-            <Route path="/investigation" element={<InvestigationPage />} />
-            <Route path="/models" element={<ModelInsightsPage />} />
-            <Route path="/settings" element={<SettingsPage />} />
-            <Route
-              path="*"
-              element={
-                <OverviewPage
-                  timeRange={timeRange}
-                  onSelectHost={handleSelectHost}
-                  onNavigateToAlerts={handleNavigateToAlerts}
-                />
-              }
-            />
-          </Routes>
+          <ErrorBoundary>
+            <Routes>
+              <Route
+                path="/"
+                element={
+                  <OverviewPage
+                    timeRange={timeRange}
+                    onSelectHost={handleSelectHost}
+                    onNavigateToAlerts={handleNavigateToAlerts}
+                  />
+                }
+              />
+              <Route
+                path="/overview"
+                element={
+                  <OverviewPage
+                    timeRange={timeRange}
+                    onSelectHost={handleSelectHost}
+                    onNavigateToAlerts={handleNavigateToAlerts}
+                  />
+                }
+              />
+              <Route
+                path="/live-network"
+                element={
+                  <LiveNetworkPage
+                    liveEvents={liveEvents}
+                    isPaused={isPaused}
+                    onTogglePause={togglePause}
+                    onSelectHost={handleSelectHost}
+                  />
+                }
+              />
+              <Route
+                path="/analytics"
+                element={<TrafficAnalyticsPage timeRange={timeRange} />}
+              />
+              <Route path="/threat-intelligence" element={<ThreatIntelligencePage />} />
+              <Route path="/threats" element={<ThreatDetectionPage />} />
+              <Route path="/alerts" element={<SecurityAlertsPage />} />
+              <Route
+                path="/hosts"
+                element={<HostsPage initialHostIp={selectedHostIp} />}
+              />
+              <Route path="/investigation" element={<InvestigationPage />} />
+              <Route path="/models" element={<ModelInsightsPage />} />
+              <Route path="/settings" element={<SettingsPage />} />
+              <Route
+                path="*"
+                element={
+                  <OverviewPage
+                    timeRange={timeRange}
+                    onSelectHost={handleSelectHost}
+                    onNavigateToAlerts={handleNavigateToAlerts}
+                  />
+                }
+              />
+            </Routes>
+          </ErrorBoundary>
         </main>
       </div>
     </div>

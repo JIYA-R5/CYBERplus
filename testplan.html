@@ -1,0 +1,2855 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CYBERplus SOC Platform - End-to-End Manual Verification & QA Test Plan</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-base: #060913;
+      --bg-surface: #0c1322;
+      --bg-card: rgba(15, 23, 42, 0.75);
+      --bg-card-hover: rgba(30, 41, 59, 0.85);
+      --border-subtle: rgba(51, 65, 85, 0.45);
+      --border-accent: rgba(6, 182, 212, 0.35);
+      --text-main: #f1f5f9;
+      --text-muted: #94a3b8;
+      --text-dim: #64748b;
+      
+      --cyan-400: #22d3ee;
+      --cyan-500: #06b6d4;
+      --cyan-glow: rgba(6, 182, 212, 0.2);
+      
+      --emerald-400: #34d399;
+      --emerald-500: #10b981;
+      --emerald-glow: rgba(16, 185, 129, 0.2);
+      
+      --amber-400: #fbbf24;
+      --amber-500: #f59e0b;
+      --amber-glow: rgba(245, 158, 11, 0.2);
+      
+      --rose-400: #fb7185;
+      --rose-500: #f43f5e;
+      --rose-glow: rgba(244, 63, 94, 0.2);
+      
+      --violet-400: #a78bfa;
+      --violet-500: #8b5cf6;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg-base);
+      color: var(--text-main);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      line-height: 1.6;
+      min-height: 100vh;
+      background-image: 
+        radial-gradient(circle at 15% 10%, rgba(6, 182, 212, 0.08) 0%, transparent 40%),
+        radial-gradient(circle at 85% 85%, rgba(139, 92, 246, 0.08) 0%, transparent 40%),
+        linear-gradient(to bottom, rgba(6, 9, 19, 0.95), var(--bg-base));
+      background-attachment: fixed;
+    }
+
+    code, pre, .mono {
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    /* Container */
+    .container {
+      max-width: 1360px;
+      margin: 0 auto;
+      padding: 2rem 1.5rem 5rem;
+    }
+
+    /* Header */
+    header {
+      background: var(--bg-card);
+      backdrop-filter: blur(16px);
+      border: 1px solid var(--border-accent);
+      border-radius: 1.25rem;
+      padding: 2rem;
+      margin-bottom: 2rem;
+      box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.7), 0 0 30px var(--cyan-glow);
+      position: relative;
+      overflow: hidden;
+    }
+
+    header::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 3px;
+      background: linear-gradient(90deg, var(--cyan-400), var(--violet-400), var(--emerald-400));
+    }
+
+    .header-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      flex-wrap: wrap;
+      gap: 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .brand-title {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .shield-icon {
+      width: 2.5rem;
+      height: 2.5rem;
+      background: linear-gradient(135deg, var(--cyan-500), var(--violet-500));
+      border-radius: 0.75rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 0 15px var(--cyan-glow);
+    }
+
+    .shield-icon svg {
+      width: 1.5rem;
+      height: 1.5rem;
+      fill: none;
+      stroke: #fff;
+      stroke-width: 2;
+    }
+
+    h1 {
+      font-size: 1.85rem;
+      font-weight: 800;
+      letter-spacing: -0.025em;
+      background: linear-gradient(to right, #fff, #93c5fd, #67e8f9);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .header-subtitle {
+      color: var(--text-muted);
+      font-size: 0.925rem;
+      margin-top: 0.25rem;
+    }
+
+    .header-badges {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      font-size: 0.75rem;
+      font-weight: 600;
+      padding: 0.25rem 0.65rem;
+      border-radius: 9999px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .badge-cyan {
+      background: rgba(6, 182, 212, 0.15);
+      color: var(--cyan-400);
+      border: 1px solid rgba(6, 182, 212, 0.3);
+    }
+
+    .badge-emerald {
+      background: rgba(16, 185, 129, 0.15);
+      color: var(--emerald-400);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+
+    .badge-violet {
+      background: rgba(139, 92, 246, 0.15);
+      color: var(--violet-400);
+      border: 1px solid rgba(139, 92, 246, 0.3);
+    }
+
+    .header-actions {
+      display: flex;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem 1rem;
+      border-radius: 0.5rem;
+      font-size: 0.825rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      border: 1px solid transparent;
+      outline: none;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--cyan-500), #0891b2);
+      color: #fff;
+      box-shadow: 0 4px 12px var(--cyan-glow);
+    }
+
+    .btn-primary:hover {
+      background: linear-gradient(135deg, #0891b2, #0e7490);
+      transform: translateY(-1px);
+    }
+
+    .btn-outline {
+      background: rgba(15, 23, 42, 0.6);
+      color: var(--text-muted);
+      border-color: var(--border-subtle);
+    }
+
+    .btn-outline:hover {
+      color: var(--text-main);
+      border-color: var(--cyan-400);
+      background: rgba(30, 41, 59, 0.8);
+    }
+
+    .btn-danger {
+      background: rgba(244, 63, 94, 0.15);
+      color: var(--rose-400);
+      border-color: rgba(244, 63, 94, 0.3);
+    }
+
+    .btn-danger:hover {
+      background: rgba(244, 63, 94, 0.25);
+    }
+
+    /* Scoreboard & Statistics */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 1rem;
+      margin-top: 1.5rem;
+      padding-top: 1.5rem;
+      border-top: 1px solid var(--border-subtle);
+    }
+
+    .stat-card {
+      background: rgba(11, 19, 36, 0.6);
+      border: 1px solid var(--border-subtle);
+      border-radius: 0.75rem;
+      padding: 1rem 1.25rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+
+    .stat-label {
+      font-size: 0.75rem;
+      color: var(--text-dim);
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .stat-value {
+      font-size: 1.75rem;
+      font-weight: 700;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .stat-progress-bar {
+      width: 100%;
+      height: 6px;
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 999px;
+      overflow: hidden;
+      margin-top: 0.5rem;
+    }
+
+    .stat-progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--cyan-400), var(--emerald-400));
+      width: 0%;
+      transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    /* Filter & Controls Bar */
+    .controls-bar {
+      background: var(--bg-card);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--border-subtle);
+      border-radius: 1rem;
+      padding: 1rem 1.25rem;
+      margin-bottom: 2rem;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 1rem;
+      position: sticky;
+      top: 1rem;
+      z-index: 40;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+    }
+
+    .search-box {
+      position: relative;
+      flex: 1;
+      min-width: 260px;
+    }
+
+    .search-input {
+      width: 100%;
+      padding: 0.6rem 1rem 0.6rem 2.5rem;
+      background: rgba(2, 6, 23, 0.7);
+      border: 1px solid var(--border-subtle);
+      border-radius: 0.5rem;
+      color: var(--text-main);
+      font-size: 0.85rem;
+      outline: none;
+      transition: all 0.2s ease;
+    }
+
+    .search-input:focus {
+      border-color: var(--cyan-400);
+      box-shadow: 0 0 10px var(--cyan-glow);
+    }
+
+    .search-icon {
+      position: absolute;
+      left: 0.75rem;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 1rem;
+      height: 1rem;
+      stroke: var(--text-dim);
+      fill: none;
+    }
+
+    .filter-tabs {
+      display: flex;
+      gap: 0.35rem;
+      flex-wrap: wrap;
+    }
+
+    .tab-btn {
+      background: transparent;
+      border: 1px solid transparent;
+      color: var(--text-muted);
+      padding: 0.4rem 0.8rem;
+      border-radius: 0.5rem;
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .tab-btn:hover {
+      color: #fff;
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .tab-btn.active {
+      background: rgba(6, 182, 212, 0.15);
+      color: var(--cyan-400);
+      border-color: rgba(6, 182, 212, 0.35);
+    }
+
+    /* Modules Section */
+    .module-section {
+      margin-bottom: 2.5rem;
+    }
+
+    .module-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 1rem 1.25rem;
+      background: linear-gradient(90deg, rgba(15, 23, 42, 0.9), rgba(15, 23, 42, 0.4));
+      border: 1px solid var(--border-subtle);
+      border-left: 4px solid var(--cyan-500);
+      border-radius: 0.75rem;
+      margin-bottom: 1rem;
+      cursor: pointer;
+      user-select: none;
+      transition: all 0.2s ease;
+    }
+
+    .module-header:hover {
+      border-color: var(--border-accent);
+      background: rgba(30, 41, 59, 0.6);
+    }
+
+    .module-info {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .module-icon {
+      width: 2rem;
+      height: 2rem;
+      border-radius: 0.5rem;
+      background: rgba(6, 182, 212, 0.15);
+      color: var(--cyan-400);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.9rem;
+      font-weight: 700;
+    }
+
+    .module-title {
+      font-size: 1.15rem;
+      font-weight: 700;
+      color: #fff;
+    }
+
+    .module-desc {
+      font-size: 0.8rem;
+      color: var(--text-dim);
+    }
+
+    .module-meta {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .module-progress-chip {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.75rem;
+      padding: 0.25rem 0.6rem;
+      border-radius: 0.375rem;
+      background: rgba(2, 6, 23, 0.8);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-muted);
+    }
+
+    .toggle-arrow {
+      width: 1.25rem;
+      height: 1.25rem;
+      fill: none;
+      stroke: var(--text-dim);
+      transition: transform 0.3s ease;
+    }
+
+    .module-section.collapsed .module-cards {
+      display: none;
+    }
+
+    .module-section.collapsed .toggle-arrow {
+      transform: rotate(-90deg);
+    }
+
+    /* Test Case Cards */
+    .module-cards {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .test-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: 0.85rem;
+      padding: 1.25rem;
+      transition: all 0.2s ease;
+      position: relative;
+    }
+
+    .test-card:hover {
+      border-color: var(--border-accent);
+      background: var(--bg-card-hover);
+    }
+
+    .test-card.passed {
+      border-left: 4px solid var(--emerald-400);
+    }
+
+    .test-card.failed {
+      border-left: 4px solid var(--rose-400);
+    }
+
+    .test-card.inprogress {
+      border-left: 4px solid var(--amber-400);
+    }
+
+    .test-card-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 1rem;
+      margin-bottom: 0.75rem;
+      flex-wrap: wrap;
+    }
+
+    .test-id-group {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .test-id {
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 700;
+      font-size: 0.85rem;
+      color: var(--cyan-400);
+      background: rgba(6, 182, 212, 0.1);
+      padding: 0.2rem 0.5rem;
+      border-radius: 0.25rem;
+      border: 1px solid rgba(6, 182, 212, 0.25);
+    }
+
+    .priority-chip {
+      font-size: 0.7rem;
+      font-weight: 700;
+      padding: 0.15rem 0.45rem;
+      border-radius: 0.25rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .p-critical {
+      background: rgba(244, 63, 94, 0.2);
+      color: var(--rose-400);
+      border: 1px solid rgba(244, 63, 94, 0.35);
+    }
+
+    .p-high {
+      background: rgba(245, 158, 11, 0.2);
+      color: var(--amber-400);
+      border: 1px solid rgba(245, 158, 11, 0.35);
+    }
+
+    .p-medium {
+      background: rgba(59, 130, 246, 0.2);
+      color: #60a5fa;
+      border: 1px solid rgba(59, 130, 246, 0.35);
+    }
+
+    .test-title {
+      font-size: 1.05rem;
+      font-weight: 600;
+      color: #fff;
+      margin-top: 0.25rem;
+    }
+
+    /* Status Controls Button Group */
+    .status-group {
+      display: flex;
+      background: rgba(2, 6, 23, 0.8);
+      border: 1px solid var(--border-subtle);
+      border-radius: 0.5rem;
+      padding: 0.2rem;
+      gap: 0.2rem;
+    }
+
+    .status-btn {
+      background: transparent;
+      border: none;
+      padding: 0.35rem 0.65rem;
+      border-radius: 0.35rem;
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--text-dim);
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .status-btn:hover {
+      color: #fff;
+    }
+
+    .status-btn.selected-pass {
+      background: var(--emerald-500);
+      color: #fff;
+      box-shadow: 0 0 10px var(--emerald-glow);
+    }
+
+    .status-btn.selected-fail {
+      background: var(--rose-500);
+      color: #fff;
+      box-shadow: 0 0 10px var(--rose-glow);
+    }
+
+    .status-btn.selected-progress {
+      background: var(--amber-500);
+      color: #000;
+      box-shadow: 0 0 10px var(--amber-glow);
+    }
+
+    .status-btn.selected-untested {
+      background: rgba(255, 255, 255, 0.1);
+      color: #fff;
+    }
+
+    /* Test Details Grid */
+    .test-details {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 0.75rem;
+      font-size: 0.85rem;
+      margin-top: 0.75rem;
+      padding-top: 0.75rem;
+      border-top: 1px dashed rgba(51, 65, 85, 0.4);
+    }
+
+    .detail-row {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+
+    .detail-label {
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--cyan-400);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .detail-content {
+      color: #cbd5e1;
+      background: rgba(2, 6, 23, 0.4);
+      padding: 0.6rem 0.8rem;
+      border-radius: 0.4rem;
+      border: 1px solid rgba(255, 255, 255, 0.03);
+    }
+
+    ol.test-steps {
+      padding-left: 1.25rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+    }
+
+    ol.test-steps li {
+      color: #cbd5e1;
+    }
+
+    .expected-box {
+      background: rgba(16, 185, 129, 0.05);
+      border: 1px solid rgba(16, 185, 129, 0.2);
+      color: #a7f3d0;
+      padding: 0.6rem 0.8rem;
+      border-radius: 0.4rem;
+    }
+
+    .cli-box {
+      background: #020617;
+      border: 1px solid rgba(51, 65, 85, 0.6);
+      border-radius: 0.4rem;
+      padding: 0.5rem 0.75rem;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.8rem;
+      color: #38bdf8;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 0.5rem;
+      overflow-x: auto;
+    }
+
+    .copy-btn {
+      background: rgba(255, 255, 255, 0.1);
+      border: none;
+      color: #fff;
+      padding: 0.2rem 0.45rem;
+      border-radius: 0.25rem;
+      font-size: 0.7rem;
+      cursor: pointer;
+      transition: background 0.2s;
+      flex-shrink: 0;
+    }
+
+    .copy-btn:hover {
+      background: var(--cyan-500);
+    }
+
+    .notes-input {
+      width: 100%;
+      background: rgba(2, 6, 23, 0.6);
+      border: 1px solid var(--border-subtle);
+      border-radius: 0.35rem;
+      padding: 0.5rem;
+      color: #f8fafc;
+      font-size: 0.8rem;
+      font-family: inherit;
+      resize: vertical;
+      min-height: 40px;
+    }
+
+    .notes-input:focus {
+      outline: none;
+      border-color: var(--cyan-400);
+    }
+
+    /* Footer */
+    footer {
+      text-align: center;
+      margin-top: 4rem;
+      color: var(--text-dim);
+      font-size: 0.825rem;
+      border-top: 1px solid var(--border-subtle);
+      padding-top: 2rem;
+    }
+
+    /* Print View */
+    @media print {
+      body {
+        background: #fff;
+        color: #000;
+      }
+      .controls-bar, .header-actions, .status-group, .notes-input, .copy-btn {
+        display: none !important;
+      }
+      header, .test-card, .module-header {
+        background: #fff !important;
+        border: 1px solid #ccc !important;
+        box-shadow: none !important;
+        color: #000 !important;
+      }
+      h1, .test-title, .module-title {
+        color: #000 !important;
+        -webkit-text-fill-color: initial !important;
+      }
+      .detail-content, .expected-box, .cli-box {
+        background: #f8f9fa !important;
+        color: #111 !important;
+        border: 1px solid #ddd !important;
+      }
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+
+  <!-- Header Banner -->
+  <header>
+    <div class="header-top">
+      <div class="brand-title">
+        <div class="shield-icon">
+          <svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+        </div>
+        <div>
+          <h1>CYBERplus SOC Quality Assurance Test Plan</h1>
+          <p class="header-subtitle">Comprehensive Manual Verification Matrix & System Robustness Playbook</p>
+        </div>
+      </div>
+
+      <div class="header-badges">
+        <span class="badge badge-cyan">Release v2.5.0</span>
+        <span class="badge badge-emerald">Live Host TShark</span>
+        <span class="badge badge-violet">Hybrid ML Tier</span>
+      </div>
+
+      <div class="header-actions">
+        <button class="btn btn-primary" onclick="exportReport()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+          Export QA Report
+        </button>
+        <button class="btn btn-outline" onclick="window.print()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>
+          Print Matrix
+        </button>
+        <button class="btn btn-danger" onclick="resetAllTests()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg>
+          Reset Status
+        </button>
+      </div>
+    </div>
+
+    <!-- Live Execution Statistics -->
+    <div class="stats-grid">
+      <div class="stat-card">
+        <span class="stat-label">Total Test Cases</span>
+        <span class="stat-value" id="stat-total">36</span>
+        <span style="font-size: 0.75rem; color: var(--text-dim);">Across 9 Core SOC Modules</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-label">Passed</span>
+        <span class="stat-value" style="color: var(--emerald-400);" id="stat-passed">0</span>
+        <div class="stat-progress-bar"><div class="stat-progress-fill" id="bar-passed"></div></div>
+      </div>
+      <div class="stat-card">
+        <span class="stat-label">Failed</span>
+        <span class="stat-value" style="color: var(--rose-400);" id="stat-failed">0</span>
+        <div class="stat-progress-bar"><div class="stat-progress-fill" id="bar-failed" style="background: var(--rose-400);"></div></div>
+      </div>
+      <div class="stat-card">
+        <span class="stat-label">In Progress</span>
+        <span class="stat-value" style="color: var(--amber-400);" id="stat-progress">0</span>
+        <div class="stat-progress-bar"><div class="stat-progress-fill" id="bar-progress" style="background: var(--amber-400);"></div></div>
+      </div>
+      <div class="stat-card">
+        <span class="stat-label">Execution Progress</span>
+        <span class="stat-value" id="stat-percent" style="color: var(--cyan-400);">0%</span>
+        <div class="stat-progress-bar"><div class="stat-progress-fill" id="bar-percent"></div></div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Sticky Filters & Search Controls -->
+  <div class="controls-bar">
+    <div class="search-box">
+      <svg class="search-icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+      <input type="text" id="searchInput" class="search-input" placeholder="Search by Test ID (e.g. TC-NET-01), keyword, IP, or button..." oninput="filterCards()">
+    </div>
+
+    <div class="filter-tabs">
+      <button class="tab-btn active" onclick="setStatusFilter('ALL', this)">All (36)</button>
+      <button class="tab-btn" onclick="setStatusFilter('UNTESTED', this)">Untested</button>
+      <button class="tab-btn" onclick="setStatusFilter('PROGRESS', this)">In Progress</button>
+      <button class="tab-btn" onclick="setStatusFilter('PASS', this)">Passed</button>
+      <button class="tab-btn" onclick="setStatusFilter('FAIL', this)">Failed</button>
+    </div>
+
+    <div style="display: flex; gap: 0.5rem;">
+      <button class="btn btn-outline" style="padding: 0.4rem 0.75rem;" onclick="toggleAllModules(true)">Expand All</button>
+      <button class="btn btn-outline" style="padding: 0.4rem 0.75rem;" onclick="toggleAllModules(false)">Collapse All</button>
+    </div>
+  </div>
+
+  <!-- MAIN TEST CASES CONTAINER -->
+  <div id="testPlanContainer">
+
+    <!-- MODULE 1: Live Network Packet Collector -->
+    <section class="module-section" data-module="NET">
+      <div class="module-header" onclick="toggleModule(this)">
+        <div class="module-info">
+          <div class="module-icon">01</div>
+          <div>
+            <div class="module-title">Host Network Packet Collector & TShark Ingestion Engine</div>
+            <div class="module-desc">Verification of physical interface discovery, IP mapping, live packet capture, and WebSocket streaming</div>
+          </div>
+        </div>
+        <div class="module-meta">
+          <span class="module-progress-chip" id="prog-NET">0/6 Done</span>
+          <svg class="toggle-arrow" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"></polyline></svg>
+        </div>
+      </div>
+
+      <div class="module-cards">
+
+        <!-- TC-NET-01 -->
+        <div class="test-card" id="card-TC-NET-01" data-id="TC-NET-01" data-status="untested">
+          <div class="test-card-top">
+            <div>
+              <div class="test-id-group">
+                <span class="test-id">TC-NET-01</span>
+                <span class="priority-chip p-critical">Critical</span>
+                <span style="font-size: 0.75rem; color: var(--text-dim);">Live Network Page</span>
+              </div>
+              <div class="test-title">Interface IP Resolution & Hash Elimination</div>
+            </div>
+            <div class="status-group">
+              <button class="status-btn" onclick="setTestStatus('TC-NET-01', 'untested')">Reset</button>
+              <button class="status-btn" onclick="setTestStatus('TC-NET-01', 'progress')">In Prog</button>
+              <button class="status-btn" onclick="setTestStatus('TC-NET-01', 'fail')">Fail</button>
+              <button class="status-btn" onclick="setTestStatus('TC-NET-01', 'pass')">Pass</button>
+            </div>
+          </div>
+          <div class="test-details">
+            <div class="detail-row">
+              <span class="detail-label">Prerequisites</span>
+              <div class="detail-content">FastAPI server running on <code>127.0.0.1:8000</code>, Vite dev server running on <code>127.0.0.1:5173</code>. Host connected to Wi-Fi.</div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Step-by-Step Procedure</span>
+              <div class="detail-content">
+                <ol class="test-steps">
+                  <li>Navigate to <code>http://127.0.0.1:5173/live</code> in your web browser.</li>
+                  <li>Locate the <strong>Network Capture Interface</strong> dropdown select element.</li>
+                  <li>Click to open the dropdown and review all adapter options listed.</li>
+                  <li>Verify that no cryptic GUID hashes (such as <code>\Device\NPF_{30B2A1A7...}</code>) appear in the labels.</li>
+                  <li>Verify that <strong>Wi-Fi</strong> is displayed with its active IPv4 address (e.g. <code>Wi-Fi (10.10.213.36)</code>) and is prioritized at the top.</li>
+                  <li>Verify secondary interfaces with valid IPs (e.g. <code>Ethernet 2 (192.168.56.1)</code>, WSL, Loopback) also display their IP addresses cleanly.</li>
+                </ol>
+              </div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Expected Result</span>
+              <div class="expected-box">The dropdown contains clean human-readable names with IP addresses (e.g. <code>Wi-Fi (10.10.213.36)</code>). All <code>\Device\NPF_{...}</code> strings are absent. Active interfaces sort to the top.</div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Quick API Verification Command</span>
+              <div class="cli-box">
+                <span>curl -s http://127.0.0.1:8000/api/collector/interfaces</span>
+                <button class="copy-btn" onclick="copyCli(this)">Copy</button>
+              </div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Tester Observations & Evidence</span>
+              <textarea class="notes-input" placeholder="Record observed adapter names, IP address, screenshot notes..." onchange="saveNotes('TC-NET-01', this.value)"></textarea>
+            </div>
+          </div>
+        </div>
+
+        <!-- TC-NET-02 -->
+        <div class="test-card" id="card-TC-NET-02" data-id="TC-NET-02" data-status="untested">
+          <div class="test-card-top">
+            <div>
+              <div class="test-id-group">
+                <span class="test-id">TC-NET-02</span>
+                <span class="priority-chip p-critical">Critical</span>
+                <span style="font-size: 0.75rem; color: var(--text-dim);">TShark Collector Engine</span>
+              </div>
+              <div class="test-title">Live Host Capture Ingestion & Uptime Clock Tracking</div>
+            </div>
+            <div class="status-group">
+              <button class="status-btn" onclick="setTestStatus('TC-NET-02', 'untested')">Reset</button>
+              <button class="status-btn" onclick="setTestStatus('TC-NET-02', 'progress')">In Prog</button>
+              <button class="status-btn" onclick="setTestStatus('TC-NET-02', 'fail')">Fail</button>
+              <button class="status-btn" onclick="setTestStatus('TC-NET-02', 'pass')">Pass</button>
+            </div>
+          </div>
+          <div class="test-details">
+            <div class="detail-row">
+              <span class="detail-label">Prerequisites</span>
+              <div class="detail-content">Wireshark/Npcap installed on host. Terminal/IDE running with network permissions.</div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Step-by-Step Procedure</span>
+              <div class="detail-content">
+                <ol class="test-steps">
+                  <li>On <code>http://127.0.0.1:5173/live</code>, select <strong>LIVE (Host TShark / Npcap)</strong> in the Ingestion Mode dropdown.</li>
+                  <li>Select your active physical interface (e.g. <code>Wi-Fi (10.10.213.36)</code>).</li>
+                  <li>Click the green <strong>Start Capture Session</strong> button.</li>
+                  <li>Observe the <strong>Uptime & Active Session</strong> card: verify the session switches to <code>Session Active</code> and the uptime timer begins incrementing every second.</li>
+                  <li>Observe the <strong>Telemetry Counters</strong>: verify packet count increases dynamically as network traffic flows.</li>
+                </ol>
+              </div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Expected Result</span>
+              <div class="expected-box">Session status switches to RUNNING. Uptime counts up (1s, 2s, 3s...). Packet counter increments in real time without UI freezing.</div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Tester Observations & Evidence</span>
+              <textarea class="notes-input" placeholder="Record start response, packet count at 10s, uptime..." onchange="saveNotes('TC-NET-02', this.value)"></textarea>
+            </div>
+          </div>
+        </div>
+
+        <!-- TC-NET-03 -->
+        <div class="test-card" id="card-TC-NET-03" data-id="TC-NET-03" data-status="untested">
+          <div class="test-card-top">
+            <div>
+              <div class="test-id-group">
+                <span class="test-id">TC-NET-03</span>
+                <span class="priority-chip p-high">High</span>
+                <span style="font-size: 0.75rem; color: var(--text-dim);">WebSocket Engine</span>
+              </div>
+              <div class="test-title">Real-Time Packet Stream & Buffer Control</div>
+            </div>
+            <div class="status-group">
+              <button class="status-btn" onclick="setTestStatus('TC-NET-03', 'untested')">Reset</button>
+              <button class="status-btn" onclick="setTestStatus('TC-NET-03', 'progress')">In Prog</button>
+              <button class="status-btn" onclick="setTestStatus('TC-NET-03', 'fail')">Fail</button>
+              <button class="status-btn" onclick="setTestStatus('TC-NET-03', 'pass')">Pass</button>
+            </div>
+          </div>
+          <div class="test-details">
+            <div class="detail-row">
+              <span class="detail-label">Step-by-Step Procedure</span>
+              <div class="detail-content">
+                <ol class="test-steps">
+                  <li>Verify WebSocket indicator at the top right displays <strong>CONNECTED</strong> with an emerald dot.</li>
+                  <li>Observe the live packet feed table: new incoming packets should append with timestamp, Source IP:Port, Destination IP:Port, Protocol, Packet Size, and Flags.</li>
+                  <li>Toggle the <strong>Stream Mode</strong> switch from <code>Live Stream (Streaming)</code> to <code>Freeze Historical</code>.</li>
+                  <li>Verify incoming packet row insertion halts to allow forensic inspection without jitter.</li>
+                  <li>Switch back to <code>Live Stream</code> and confirm live packet ingestion resumes smoothly.</li>
+                </ol>
+              </div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Expected Result</span>
+              <div class="expected-box">WebSocket connection maintains <code>ws://127.0.0.1:8000/ws/events</code> reliably. Stream freeze pause and resume mechanisms function properly.</div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Tester Observations & Evidence</span>
+              <textarea class="notes-input" placeholder="Record WebSocket connection latency, freeze behavior..." onchange="saveNotes('TC-NET-03', this.value)"></textarea>
+            </div>
+          </div>
+        </div>
+
+        <!-- TC-NET-04 -->
+        <div class="test-card" id="card-TC-NET-04" data-id="TC-NET-04" data-status="untested">
+          <div class="test-card-top">
+            <div>
+              <div class="test-id-group">
+                <span class="test-id">TC-NET-04</span>
+                <span class="priority-chip p-medium">Medium</span>
+                <span style="font-size: 0.75rem; color: var(--text-dim);">Live Filtering</span>
+              </div>
+              <div class="test-title">Multi-Protocol Filtering & Suspicious Event Toggle</div>
+            </div>
+            <div class="status-group">
+              <button class="status-btn" onclick="setTestStatus('TC-NET-04', 'untested')">Reset</button>
+              <button class="status-btn" onclick="setTestStatus('TC-NET-04', 'progress')">In Prog</button>
+              <button class="status-btn" onclick="setTestStatus('TC-NET-04', 'fail')">Fail</button>
+              <button class="status-btn" onclick="setTestStatus('TC-NET-04', 'pass')">Pass</button>
+            </div>
+          </div>
+          <div class="test-details">
+            <div class="detail-row">
+              <span class="detail-label">Step-by-Step Procedure</span>
+              <div class="detail-content">
+                <ol class="test-steps">
+                  <li>In the protocol filter bar, select <strong>TCP</strong>: verify only TCP packets appear in the table.</li>
+                  <li>Select <strong>UDP</strong>: verify DNS/mDNS/QUIC UDP packets appear.</li>
+                  <li>Select <strong>ICMP</strong>: ping <code>8.8.8.8</code> from a terminal and verify echo request/reply packets populate.</li>
+                  <li>Click <strong>Suspicious Only</strong> checkbox: verify only packets flagged as probe/scan/high risk remain visible.</li>
+                  <li>Type an IP (e.g. <code>10.10.</code> or <code>1.1.1.1</code>) in the Search Filter box: verify instantaneous row filtering.</li>
+                </ol>
+              </div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Expected Result</span>
+              <div class="expected-box">Filters apply instantly to live event buffer without console errors or table corruption.</div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Tester Observations & Evidence</span>
+              <textarea class="notes-input" placeholder="Notes on filtering accuracy..." onchange="saveNotes('TC-NET-04', this.value)"></textarea>
+            </div>
+          </div>
+        </div>
+
+        <!-- TC-NET-05 -->
+        <div class="test-card" id="card-TC-NET-05" data-id="TC-NET-05" data-status="untested">
+          <div class="test-card-top">
+            <div>
+              <div class="test-id-group">
+                <span class="test-id">TC-NET-05</span>
+                <span class="priority-chip p-high">High</span>
+                <span style="font-size: 0.75rem; color: var(--text-dim);">Collector Lifecycle</span>
+              </div>
+              <div class="test-title">Safe Collector Termination & Subprocess Teardown</div>
+            </div>
+            <div class="status-group">
+              <button class="status-btn" onclick="setTestStatus('TC-NET-05', 'untested')">Reset</button>
+              <button class="status-btn" onclick="setTestStatus('TC-NET-05', 'progress')">In Prog</button>
+              <button class="status-btn" onclick="setTestStatus('TC-NET-05', 'fail')">Fail</button>
+              <button class="status-btn" onclick="setTestStatus('TC-NET-05', 'pass')">Pass</button>
+            </div>
+          </div>
+          <div class="test-details">
+            <div class="detail-row">
+              <span class="detail-label">Step-by-Step Procedure</span>
+              <div class="detail-content">
+                <ol class="test-steps">
+                  <li>While a capture session is active, click the red <strong>Stop Session</strong> button.</li>
+                  <li>Verify button switches back to green <strong>Start Capture Session</strong>.</li>
+                  <li>Verify Uptime stops incrementing.</li>
+                  <li>Check Windows Task Manager or run <code>Get-Process tshark -ErrorAction SilentlyContinue</code> in PowerShell to confirm the background TShark process terminated cleanly.</li>
+                </ol>
+              </div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Expected Result</span>
+              <div class="expected-box">Collector status becomes STOPPED. Background tshark subprocess terminates cleanly without orphan processes.</div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Tester Observations & Evidence</span>
+              <textarea class="notes-input" placeholder="Confirm tshark process termination..." onchange="saveNotes('TC-NET-05', this.value)"></textarea>
+            </div>
+          </div>
+        </div>
+
+        <!-- TC-NET-06 -->
+        <div class="test-card" id="card-TC-NET-06" data-id="TC-NET-06" data-status="untested">
+          <div class="test-card-top">
+            <div>
+              <div class="test-id-group">
+                <span class="test-id">TC-NET-06</span>
+                <span class="priority-chip p-medium">Medium</span>
+                <span style="font-size: 0.75rem; color: var(--text-dim);">Modal & UX</span>
+              </div>
+              <div class="test-title">Session Conflict & Restart Confirmation Modal</div>
+            </div>
+            <div class="status-group">
+              <button class="status-btn" onclick="setTestStatus('TC-NET-06', 'untested')">Reset</button>
+              <button class="status-btn" onclick="setTestStatus('TC-NET-06', 'progress')">In Prog</button>
+              <button class="status-btn" onclick="setTestStatus('TC-NET-06', 'fail')">Fail</button>
+              <button class="status-btn" onclick="setTestStatus('TC-NET-06', 'pass')">Pass</button>
+            </div>
+          </div>
+          <div class="test-details">
+            <div class="detail-row">
+              <span class="detail-label">Step-by-Step Procedure</span>
+              <div class="detail-content">
+                <ol class="test-steps">
+                  <li>Start an active session on Wi-Fi.</li>
+                  <li>Trigger a restart request by calling the start action again or via modal.</li>
+                  <li>Verify the <strong>Restart Active Capture Session?</strong> confirmation modal appears.</li>
+                  <li>Verify the modal displays the clean interface name (e.g. <code>Wi-Fi (10.10.213.36)</code>) rather than a GUID.</li>
+                  <li>Click <strong>Cancel</strong>: verify session continues uninterrupted.</li>
+                  <li>Reopen modal and click <strong>Confirm Restart</strong>: verify existing session terminates and starts fresh.</li>
+                </ol>
+              </div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Expected Result</span>
+              <div class="expected-box">Modal warns user of active session, shows human-friendly interface name, and gracefully restarts on confirmation.</div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Tester Observations & Evidence</span>
+              <textarea class="notes-input" placeholder="Notes on restart modal behavior..." onchange="saveNotes('TC-NET-06', this.value)"></textarea>
+            </div>
+          </div>
+        </div>
+
+        <!-- TC-NET-07 -->
+        <div class="test-card" id="card-TC-NET-07" data-id="TC-NET-07" data-status="untested">
+          <div class="test-header">
+            <div class="test-title-group">
+              <div class="test-id-pill">
+                <span class="test-id">TC-NET-07</span>
+                <span class="p-badge p-critical">Critical</span>
+              </div>
+              <div class="test-title">Ingestion Mode Switching (Live Wire Capture vs Synthetic Simulation)</div>
+            </div>
+            <div class="test-actions">
+              <button class="status-btn" onclick="setTestStatus('TC-NET-07', 'untested')">Reset</button>
+              <button class="status-btn" onclick="setTestStatus('TC-NET-07', 'progress')">In Prog</button>
+              <button class="status-btn" onclick="setTestStatus('TC-NET-07', 'fail')">Fail</button>
+              <button class="status-btn" onclick="setTestStatus('TC-NET-07', 'pass')">Pass</button>
+            </div>
+          </div>
+          <div class="test-body">
+            <div class="detail-row">
+              <span class="detail-label">Test Objective</span>
+              <div>Verify seamless 1-click switching between Synthetic Simulation and Live Wire Packet Capture, and verify row source tags (LIVE vs SIM).</div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Preconditions</span>
+              <div>CYBERplus backend and frontend running at http://127.0.0.1:5173/live.</div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Execution Steps</span>
+              <ol class="steps-list">
+                <li>Click the purple <strong>Synthetic Simulation</strong> button & click <strong>Start Capture Session</strong>.</li>
+                <li>Verify table header displays <code>SYNTHETIC SIMULATION (Test Attacks Active)</code> and rows show purple <code>SIM</code> tags with simulated attack IPs.</li>
+                <li>While running, click the emerald <strong>LIVE Host Wire</strong> button.</li>
+                <li>Verify capture seamlessly switches to host adapter (Wi-Fi), table header displays <code>LIVE WIRE CAPTURE</code>, and rows show emerald <code>LIVE</code> tags with real host IPs.</li>
+                <li>Click <strong>Stop Collector</strong>: verify feed halts cleanly and header shows <code>CAPTURE STOPPED (Idle)</code>.</li>
+              </ol>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Expected Result</span>
+              <div class="expected-box">1-click mode switcher allows toggling between Live Wire and Synthetic Simulation sessions; row badges accurately reflect packet source with zero ambiguity.</div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Tester Observations & Evidence</span>
+              <textarea class="notes-input" placeholder="Confirm LIVE and SIM tags, interface display, mode toggling..." onchange="saveNotes('TC-NET-07', this.value)"></textarea>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+
+    <!-- MODULE 2: Traffic Analytics & Visualizations -->
+    <section class="module-section" data-module="TRF">
+      <div class="module-header" onclick="toggleModule(this)">
+        <div class="module-info">
+          <div class="module-icon">02</div>
+          <div>
+            <div class="module-title">Traffic Analytics & Volume Metrics</div>
+            <div class="module-desc">Validation of receiver destination aggregation, protocol distribution, and bandwidth graphs</div>
+          </div>
+        </div>
+        <div class="module-meta">
+          <span class="module-progress-chip" id="prog-TRF">0/4 Done</span>
+          <svg class="toggle-arrow" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"></polyline></svg>
+        </div>
+      </div>
+
+      <div class="module-cards">
+
+        <!-- TC-TRF-01 -->
+        <div class="test-card" id="card-TC-TRF-01" data-id="TC-TRF-01" data-status="untested">
+          <div class="test-card-top">
+            <div>
+              <div class="test-id-group">
+                <span class="test-id">TC-TRF-01</span>
+                <span class="priority-chip p-critical">Critical</span>
+                <span style="font-size: 0.75rem; color: var(--text-dim);">Analytics Page</span>
+              </div>
+              <div class="test-title">Highest Volume Destinations (Receivers) Rendering</div>
+            </div>
+            <div class="status-group">
+              <button class="status-btn" onclick="setTestStatus('TC-TRF-01', 'untested')">Reset</button>
+              <button class="status-btn" onclick="setTestStatus('TC-TRF-01', 'progress')">In Prog</button>
+              <button class="status-btn" onclick="setTestStatus('TC-TRF-01', 'fail')">Fail</button>
+              <button class="status-btn" onclick="setTestStatus('TC-TRF-01', 'pass')">Pass</button>
+            </div>
+          </div>
+          <div class="test-details">
+            <div class="detail-row">
+              <span class="detail-label">Step-by-Step Procedure</span>
+              <div class="detail-content">
+                <ol class="test-steps">
+                  <li>Navigate to <code>http://127.0.0.1:5173/analytics</code>.</li>
+                  <li>Locate the <strong>Highest Volume Destinations (Receivers)</strong> chart card.</li>
+                  <li>Verify the card is populated with destination IP rows, byte bars, and packet counts.</li>
+                  <li>Confirm there are <strong>NO blank boxes</strong> or empty placeholders.</li>
+                  <li>Hover over destination IP bars: verify tooltips render accurate byte totals and percentages.</li>
+                </ol>
+              </div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Expected Result</span>
+              <div class="expected-box">Top destination receivers render with accurate IP labels, proportional progress bars, and formatted data volume metrics.</div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Quick API Command</span>
+              <div class="cli-box">
+                <span>curl -s http://127.0.0.1:8000/api/metrics/traffic</span>
+                <button class="copy-btn" onclick="copyCli(this)">Copy</button>
+              </div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Tester Observations & Evidence</span>
+              <textarea class="notes-input" placeholder="Record destination IPs shown, e.g. 10.0.0.1, 192.168.1.1..." onchange="saveNotes('TC-TRF-01', this.value)"></textarea>
+            </div>
+          </div>
+        </div>
+
+        <!-- TC-TRF-02 -->
+        <div class="test-card" id="card-TC-TRF-02" data-id="TC-TRF-02" data-status="untested">
+          <div class="test-card-top">
+            <div>
+              <div class="test-id-group">
+                <span class="test-id">TC-TRF-02</span>
+                <span class="priority-chip p-high">High</span>
+                <span style="font-size: 0.75rem; color: var(--text-dim);">Protocol Analytics</span>
+              </div>
+              <div class="test-title">Protocol Distribution & Byte Share Breakdown</div>
+            </div>
+            <div class="status-group">
+              <button class="status-btn" onclick="setTestStatus('TC-TRF-02', 'untested')">Reset</button>
+              <button class="status-btn" onclick="setTestStatus('TC-TRF-02', 'progress')">In Prog</button>
+              <button class="status-btn" onclick="setTestStatus('TC-TRF-02', 'fail')">Fail</button>
+              <button class="status-btn" onclick="setTestStatus('TC-TRF-02', 'pass')">Pass</button>
+            </div>
+          </div>
+          <div class="test-details">
+            <div class="detail-row">
+              <span class="detail-label">Step-by-Step Procedure</span>
+              <div class="detail-content">
+                <ol class="test-steps">
+                  <li>Review the <strong>Protocol Distribution</strong> breakdown widget on the Analytics page.</li>
+                  <li>Verify TCP, UDP, ICMP, and Other protocol proportions sum to 100%.</li>
+                  <li>Verify color coding distinguishes protocols clearly (e.g. Cyan for TCP, Violet for UDP, Amber for ICMP).</li>
+                </ol>
+              </div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Expected Result</span>
+              <div class="expected-box">Percentages match network telemetry aggregate; protocol labels and color indicators render smoothly.</div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Tester Observations & Evidence</span>
+              <textarea class="notes-input" placeholder="Record protocol breakdown percentages..." onchange="saveNotes('TC-TRF-02', this.value)"></textarea>
+            </div>
+          </div>
+        </div>
+
+        <!-- TC-TRF-03 -->
+        <div class="test-card" id="card-TC-TRF-03" data-id="TC-TRF-03" data-status="untested">
+          <div class="test-card-top">
+            <div>
+              <div class="test-id-group">
+                <span class="test-id">TC-TRF-03</span>
+                <span class="priority-chip p-medium">Medium</span>
+                <span style="font-size: 0.75rem; color: var(--text-dim);">Throughput Graph</span>
+              </div>
+              <div class="test-title">Bandwidth Throughput Timeline (Incoming vs Outgoing)</div>
+            </div>
+            <div class="status-group">
+              <button class="status-btn" onclick="setTestStatus('TC-TRF-03', 'untested')">Reset</button>
+              <button class="status-btn" onclick="setTestStatus('TC-TRF-03', 'progress')">In Prog</button>
+              <button class="status-btn" onclick="setTestStatus('TC-TRF-03', 'fail')">Fail</button>
+              <button class="status-btn" onclick="setTestStatus('TC-TRF-03', 'pass')">Pass</button>
+            </div>
+          </div>
+          <div class="test-details">
+            <div class="detail-row">
+              <span class="detail-label">Step-by-Step Procedure</span>
+              <div class="detail-content">
+                <ol class="test-steps">
+                  <li>Inspect the <strong>Bandwidth Over Time</strong> line/area chart.</li>
+                  <li>Verify both Incoming Bandwidth (kbps) and Outgoing Bandwidth (kbps) curves are rendered.</li>
+                  <li>Confirm timestamp intervals on the X-axis reflect the selected time window.</li>
+                </ol>
+              </div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Expected Result</span>
+              <div class="expected-box">Continuous bandwidth curve displays peaks and troughs matching network activity.</div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Tester Observations & Evidence</span>
+              <textarea class="notes-input" placeholder="Notes on bandwidth chart rendering..." onchange="saveNotes('TC-TRF-03', this.value)"></textarea>
+            </div>
+          </div>
+        </div>
+
+        <!-- TC-TRF-04 -->
+        <div class="test-card" id="card-TC-TRF-04" data-id="TC-TRF-04" data-status="untested">
+          <div class="test-card-top">
+            <div>
+              <div class="test-id-group">
+                <span class="test-id">TC-TRF-04</span>
+                <span class="priority-chip p-medium">Medium</span>
+                <span style="font-size: 0.75rem; color: var(--text-dim);">Time Range Selection</span>
+              </div>
+              <div class="test-title">Time Range Filter Switching (1h, 6h, 24h, 7d)</div>
+            </div>
+            <div class="status-group">
+              <button class="status-btn" onclick="setTestStatus('TC-TRF-04', 'untested')">Reset</button>
+              <button class="status-btn" onclick="setTestStatus('TC-TRF-04', 'progress')">In Prog</button>
+              <button class="status-btn" onclick="setTestStatus('TC-TRF-04', 'fail')">Fail</button>
+              <button class="status-btn" onclick="setTestStatus('TC-TRF-04', 'pass')">Pass</button>
+            </div>
+          </div>
+          <div class="test-details">
+            <div class="detail-row">
+              <span class="detail-label">Step-by-Step Procedure</span>
+              <div class="detail-content">
+                <ol class="test-steps">
+                  <li>Click each time filter button: <strong>1h</strong>, <strong>6h</strong>, <strong>24h</strong>, and <strong>7d</strong>.</li>
+                  <li>Verify metric cards (Packets Observed, Current PPS, Bandwidth) re-query and adjust values accordingly.</li>
+                  <li>Confirm no page reloads or broken state occurs during transitions.</li>
+                </ol>
+              </div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Expected Result</span>
+              <div class="expected-box">Data aggregates update smoothly to match the selected time range window.</div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Tester Observations & Evidence</span>
+              <textarea class="notes-input" placeholder="Confirm time filter query responses..." onchange="saveNotes('TC-TRF-04', this.value)"></textarea>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+
+    <!-- MODULE 3: Threat Detection & Hybrid ML Tier -->
+    <section class="module-section" data-module="THR">
+      <div class="module-header" onclick="toggleModule(this)">
+        <div class="module-info">
+          <div class="module-icon">03</div>
+          <div>
+            <div class="module-title">Threat Detection & Hybrid ML Classification Engine</div>
+            <div class="module-desc">Verification of rule-based signatures, supervised threat classifiers, and ML guardrails</div>
+          </div>
+        </div>
+        <div class="module-meta">
+          <span class="module-progress-chip" id="prog-THR">0/5 Done</span>
+          <svg class="toggle-arrow" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"></polyline></svg>
+        </div>
+      </div>
+
+      <div class="module-cards">
+
+        <!-- TC-THR-01 -->
+        <div class="test-card" id="card-TC-THR-01" data-id="TC-THR-01" data-status="untested">
+          <div class="test-card-top">
+            <div>
+              <div class="test-id-group">
+                <span class="test-id">TC-THR-01</span>
+                <span class="priority-chip p-critical">Critical</span>
+                <span style="font-size: 0.75rem; color: var(--text-dim);">Signature Rules</span>
+              </div>
+              <div class="test-title">Rule-Based Signatures (Port Scan, SYN Flood, Brute Force)</div>
+            </div>
+            <div class="status-group">
+              <button class="status-btn" onclick="setTestStatus('TC-THR-01', 'untested')">Reset</button>
+              <button class="status-btn" onclick="setTestStatus('TC-THR-01', 'progress')">In Prog</button>
+              <button class="status-btn" onclick="setTestStatus('TC-THR-01', 'fail')">Fail</button>
+              <button class="status-btn" onclick="setTestStatus('TC-THR-01', 'pass')">Pass</button>
+            </div>
+          </div>
+          <div class="test-details">
+            <div class="detail-row">
+              <span class="detail-label">Step-by-Step Procedure</span>
+              <div class="detail-content">
+                <ol class="test-steps">
+                  <li>Navigate to <code>http://127.0.0.1:5173/threats</code>.</li>
+                  <li>Review the active detection rules list (RULE-001 Port Scan, RULE-002 SYN Flood, RULE-003 SSH/RDP Brute Force, RULE-004 DNS Tunneling).</li>
+                  <li>Verify each rule shows its detection tier (Deterministic Rule), status (Active), and trigger threshold.</li>
+                  <li>Run the synthetic demo generator script: <code>python scripts/demo_live_connection.py</code> in a terminal.</li>
+                  <li>Confirm alerts are generated for matched signature events with appropriate rule IDs.</li>
+                </ol>
+              </div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Expected Result</span>
+              <div class="expected-box">Rule signatures flag attacks deterministically with rule ID citations and risk ratings.</div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Quick Trigger Command</span>
+              <div class="cli-box">
+                <span>python scripts/demo_live_connection.py</span>
+                <button class="copy-btn" onclick="copyCli(this)">Copy</button>
+              </div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Tester Observations & Evidence</span>
+              <textarea class="notes-input" placeholder="Record triggered rule IDs and event IDs..." onchange="saveNotes('TC-THR-01', this.value)"></textarea>
+            </div>
+          </div>
+        </div>
+
+        <!-- TC-THR-02 -->
+        <div class="test-card" id="card-TC-THR-02" data-id="TC-THR-02" data-status="untested">
+          <div class="test-card-top">
+            <div>
+              <div class="test-id-group">
+                <span class="test-id">TC-THR-02</span>
+                <span class="priority-chip p-critical">Critical</span>
+                <span style="font-size: 0.75rem; color: var(--text-dim);">Supervised Classifier</span>
+              </div>
+              <div class="test-title">Supervised ML Classifier Classification Tier</div>
+            </div>
+            <div class="status-group">
+              <button class="status-btn" onclick="setTestStatus('TC-THR-02', 'untested')">Reset</button>
+              <button class="status-btn" onclick="setTestStatus('TC-THR-02', 'progress')">In Prog</button>
+              <button class="status-btn" onclick="setTestStatus('TC-THR-02', 'fail')">Fail</button>
+              <button class="status-btn" onclick="setTestStatus('TC-THR-02', 'pass')">Pass</button>
+            </div>
+          </div>
+          <div class="test-details">
+            <div class="detail-row">
+              <span class="detail-label">Step-by-Step Procedure</span>
+              <div class="detail-content">
+                <ol class="test-steps">
+                  <li>Verify the supervised classification engine classifies unknown flows into categories: <code>Benign</code>, <code>PortScan</code>, <code>DDoS</code>, <code>BruteForce</code>, <code>C2_Beacon</code>, or <code>Exfiltration</code>.</li>
+                  <li>Check threat detection evaluation via Python test client.</li>
+                  <li>Verify output dictionary contains: <code>detection_tier</code>, <code>supervised_class</code>, and <code>confidence_score</code>.</li>
+                </ol>
+              </div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Expected Result</span>
+              <div class="expected-box">Supervised classifier predicts threat category with high accuracy and outputs structured classification metadata.</div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Test Command</span>
+              <div class="cli-box">
+                <span>python -m pytest tests/test_pcap_ml_pipeline.py -k test_supervised_classifier_training_and_inference</span>
+                <button class="copy-btn" onclick="copyCli(this)">Copy</button>
+              </div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Tester Observations & Evidence</span>
+              <textarea class="notes-input" placeholder="Record classifier test result and confidence scores..." onchange="saveNotes('TC-THR-02', this.value)"></textarea>
+            </div>
+          </div>
+        </div>
+
+        <!-- TC-THR-03 -->
+        <div class="test-card" id="card-TC-THR-03" data-id="TC-THR-03" data-status="untested">
+          <div class="test-card-top">
+            <div>
+              <div class="test-id-group">
+                <span class="test-id">TC-THR-03</span>
+                <span class="priority-chip p-high">High</span>
+                <span style="font-size: 0.75rem; color: var(--text-dim);">Safety Guardrail</span>
+              </div>
+              <div class="test-title">Anomaly Score Safety Guardrail (Continuous Non-Probability)</div>
+            </div>
+            <div class="status-group">
+              <button class="status-btn" onclick="setTestStatus('TC-THR-03', 'untested')">Reset</button>
+              <button class="status-btn" onclick="setTestStatus('TC-THR-03', 'progress')">In Prog</button>
+              <button class="status-btn" onclick="setTestStatus('TC-THR-03', 'fail')">Fail</button>
+              <button class="status-btn" onclick="setTestStatus('TC-THR-03', 'pass')">Pass</button>
+            </div>
+          </div>
+          <div class="test-details">
+            <div class="detail-row">
+              <span class="detail-label">Core Requirement</span>
+              <div class="detail-content">Per system safety architecture, anomaly scores from Isolation Forest / ML distance metrics are uncalibrated continuous values, NOT probabilities, and must never be falsely presented as 0-100% probabilities without calibration.</div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Step-by-Step Procedure</span>
+              <div class="detail-content">
+                <ol class="test-steps">
+                  <li>Execute evaluation of flow in <code>detector.py</code>.</li>
+                  <li>Verify result contains flag <code>is_probability: False</code>.</li>
+                  <li>Verify the UI displays anomaly scores as raw continuous indices (e.g. <code>Score: 0.842</code> or <code>Distance: 1.45</code>) and not as guaranteed probabilities.</li>
+                </ol>
+              </div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Expected Result</span>
+              <div class="expected-box"><code>result['is_probability'] is False</code> is strictly verified. UI labels distinguish continuous anomaly scores from calibrated probabilities.</div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Tester Observations & Evidence</span>
+              <textarea class="notes-input" placeholder="Record confirmation of is_probability flag..." onchange="saveNotes('TC-THR-03', this.value)"></textarea>
+            </div>
+          </div>
+        </div>
+
+        <!-- TC-THR-04 -->
+        <div class="test-card" id="card-TC-THR-04" data-id="TC-THR-04" data-status="untested">
+          <div class="test-card-top">
+            <div>
+              <div class="test-id-group">
+                <span class="test-id">TC-THR-04</span>
+                <span class="priority-chip p-high">High</span>
+                <span style="font-size: 0.75rem; color: var(--text-dim);">Live Threat Stream</span>
+              </div>
+              <div class="test-title">Live Wire Suspicious Packet Detection & Tagging</div>
+            </div>
+            <div class="status-group">
+              <button class="status-btn" onclick="setTestStatus('TC-THR-04', 'untested')">Reset</button>
+              <button class="status-btn" onclick="setTestStatus('TC-THR-04', 'progress')">In Prog</button>
+              <button class="status-btn" onclick="setTestStatus('TC-THR-04', 'fail')">Fail</button>
+              <button class="status-btn" onclick="setTestStatus('TC-THR-04', 'pass')">Pass</button>
+            </div>
+          </div>
+          <div class="test-details">
+            <div class="detail-row">
+              <span class="detail-label">Step-by-Step Procedure</span>
+              <div class="detail-content">
+                <ol class="test-steps">
+                  <li>In <code>LiveNetworkPage.tsx</code>, observe incoming live packets.</li>
+                  <li>Send a SYN probe to port 22 or 3389 (e.g. <code>Test-NetConnection -ComputerName 127.0.0.1 -Port 22</code>).</li>
+                  <li>Verify the packet is highlighted in rose/red in the table with status <code>Port Scan Probe</code> and <code>is_suspicious: true</code>.</li>
+                  <li>Confirm a corresponding entry is added to SQLite <code>telemetry_events</code> with <code>risk: High</code>.</li>
+                </ol>
+              </div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Expected Result</span>
+              <div class="expected-box">SYN probes on sensitive ports (22, 23, 445, 3389, 8080) are flagged immediately and highlighted in red.</div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Tester Observations & Evidence</span>
+              <textarea class="notes-input" placeholder="Record probe detection timestamps and port..." onchange="saveNotes('TC-THR-04', this.value)"></textarea>
+            </div>
+          </div>
+        </div>
+
+        <!-- TC-THR-05 -->
+        <div class="test-card" id="card-TC-THR-05" data-id="TC-THR-05" data-status="untested">
+          <div class="test-card-top">
+            <div>
+              <div class="test-id-group">
+                <span class="test-id">TC-THR-05</span>
+                <span class="priority-chip p-medium">Medium</span>
+                <span style="font-size: 0.75rem; color: var(--text-dim);">Feature Extractor</span>
+              </div>
+              <div class="test-title">Bidirectional Flow Feature Extraction</div>
+            </div>
+            <div class="status-group">
+              <button class="status-btn" onclick="setTestStatus('TC-THR-05', 'untested')">Reset</button>
+              <button class="status-btn" onclick="setTestStatus('TC-THR-05', 'progress')">In Prog</button>
+              <button class="status-btn" onclick="setTestStatus('TC-THR-05', 'fail')">Fail</button>
+              <button class="status-btn" onclick="setTestStatus('TC-THR-05', 'pass')">Pass</button>
+            </div>
+          </div>
+          <div class="test-details">
+            <div class="detail-row">
+              <span class="detail-label">Step-by-Step Procedure</span>
+              <div class="detail-content">
+                <ol class="test-steps">
+                  <li>Verify <code>FLOW_FEATURE_NAMES</code> in <code>ml_engine.py</code> contains all required 15 bidirectional flow features: <code>flow_duration</code>, <code>fwd_pkts</code>, <code>bwd_pkts</code>, <code>fwd_bytes</code>, <code>bwd_bytes</code>, <code>packet_length_mean</code>, <code>syn_flag_ratio</code>, etc.</li>
+                  <li>Run the flow feature extraction unit test.</li>
+                  <li>Confirm all features are extracted without NaN or infinity values.</li>
+                </ol>
+              </div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Expected Result</span>
+              <div class="expected-box">15 features extracted with zero NaN values, ready for model inference.</div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Test Command</span>
+              <div class="cli-box">
+                <span>python -m pytest tests/test_pcap_ml_pipeline.py -k test_feature_extractor</span>
+                <button class="copy-btn" onclick="copyCli(this)">Copy</button>
+              </div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Tester Observations & Evidence</span>
+              <textarea class="notes-input" placeholder="Record feature extractor test output..." onchange="saveNotes('TC-THR-05', this.value)"></textarea>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+
+    <!-- MODULE 4: Security Alerts & Incident Triage -->
+    <section class="module-section" data-module="ALT">
+      <div class="module-header" onclick="toggleModule(this)">
+        <div class="module-info">
+          <div class="module-icon">04</div>
+          <div>
+            <div class="module-title">Security Alerts & Incident Triage Management</div>
+            <div class="module-desc">Verification of alert feed, forensic detail drawer, state transitions, and analyst annotations</div>
+          </div>
+        </div>
+        <div class="module-meta">
+          <span class="module-progress-chip" id="prog-ALT">0/4 Done</span>
+          <svg class="toggle-arrow" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"></polyline></svg>
+        </div>
+      </div>
+
+      <div class="module-cards">
+
+        <!-- TC-ALT-01 -->
+        <div class="test-card" id="card-TC-ALT-01" data-id="TC-ALT-01" data-status="untested">
+          <div class="test-card-top">
+            <div>
+              <div class="test-id-group">
+                <span class="test-id">TC-ALT-01</span>
+                <span class="priority-chip p-critical">Critical</span>
+                <span style="font-size: 0.75rem; color: var(--text-dim);">Alerts Page</span>
+              </div>
+              <div class="test-title">Security Alert Queue & Severity Badges</div>
+            </div>
+            <div class="status-group">
+              <button class="status-btn" onclick="setTestStatus('TC-ALT-01', 'untested')">Reset</button>
+              <button class="status-btn" onclick="setTestStatus('TC-ALT-01', 'progress')">In Prog</button>
+              <button class="status-btn" onclick="setTestStatus('TC-ALT-01', 'fail')">Fail</button>
+              <button class="status-btn" onclick="setTestStatus('TC-ALT-01', 'pass')">Pass</button>
+            </div>
+          </div>
+          <div class="test-details">
+            <div class="detail-row">
+              <span class="detail-label">Step-by-Step Procedure</span>
+              <div class="detail-content">
+                <ol class="test-steps">
+                  <li>Navigate to <code>http://127.0.0.1:5173/alerts</code>.</li>
+                  <li>Verify alert table renders all current security incidents.</li>
+                  <li>Confirm severity badges display correct color semantics: <strong>Critical</strong> (Red/Rose), <strong>High</strong> (Orange/Amber), <strong>Medium</strong> (Yellow), <strong>Low</strong> (Blue/Cyan), <strong>Info</strong> (Slate).</li>
+                  <li>Confirm status pills display: <code>New</code>, <code>Investigating</code>, <code>Resolved</code>, <code>Dismissed</code>.</li>
+                  <li>Test severity filter buttons (All, Critical, High, Medium, Low) and verify table updates accordingly.</li>
+                </ol>
+              </div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Expected Result</span>
+              <div class="expected-box">Alert feed loads with accurate severity styling, timestamps, source IPs, and attack categories.</div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Tester Observations & Evidence</span>
+              <textarea class="notes-input" placeholder="Record alert count and sample incident IDs..." onchange="saveNotes('TC-ALT-01', this.value)"></textarea>
+            </div>
+          </div>
+        </div>
+
+        <!-- TC-ALT-02 -->
+        <div class="test-card" id="card-TC-ALT-02" data-id="TC-ALT-02" data-status="untested">
+          <div class="test-card-top">
+            <div>
+              <div class="test-id-group">
+                <span class="test-id">TC-ALT-02</span>
+                <span class="priority-chip p-high">High</span>
+                <span style="font-size: 0.75rem; color: var(--text-dim);">Forensic Drawer</span>
+              </div>
+              <div class="test-title">Alert Detail Drawer & Forensic Evidence Inspection</div>
+            </div>
+            <div class="status-group">
+              <button class="status-btn" onclick="setTestStatus('TC-ALT-02', 'untested')">Reset</button>
+              <button class="status-btn" onclick="setTestStatus('TC-ALT-02', 'progress')">In Prog</button>
+              <button class="status-btn" onclick="setTestStatus('TC-ALT-02', 'fail')">Fail</button>
+              <button class="status-btn" onclick="setTestStatus('TC-ALT-02', 'pass')">Pass</button>
+            </div>
+          </div>
+          <div class="test-details">
+            <div class="detail-row">
+              <span class="detail-label">Step-by-Step Procedure</span>
+              <div class="detail-content">
+                <ol class="test-steps">
+                  <li>Click on any alert row in the table.</li>
+                  <li>Verify the slide-out <strong>Alert Detail Drawer</strong> opens smoothly from the right.</li>
+                  <li>Inspect forensic evidence: verify Attack Vector, Source IP, Destination IP, Port, Recurrence Count, Model Version, and ML Anomaly Score are displayed.</li>
+                  <li>Click the close button or backdrop: verify drawer closes cleanly.</li>
+                </ol>
+              </div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Expected Result</span>
+              <div class="expected-box">Forensic drawer renders complete incident details, raw packet evidence, and telemetry source without clipping.</div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Tester Observations & Evidence</span>
+              <textarea class="notes-input" placeholder="Notes on drawer rendering and data completeness..." onchange="saveNotes('TC-ALT-02', this.value)"></textarea>
+            </div>
+          </div>
+        </div>
+
+        <!-- TC-ALT-03 -->
+        <div class="test-card" id="card-TC-ALT-03" data-id="TC-ALT-03" data-status="untested">
+          <div class="test-card-top">
+            <div>
+              <div class="test-id-group">
+                <span class="test-id">TC-ALT-03</span>
+                <span class="priority-chip p-high">High</span>
+                <span style="font-size: 0.75rem; color: var(--text-dim);">Lifecycle Management</span>
+              </div>
+              <div class="test-title">Incident Status Lifecycle & Verdict Updates</div>
+            </div>
+            <div class="status-group">
+              <button class="status-btn" onclick="setTestStatus('TC-ALT-03', 'untested')">Reset</button>
+              <button class="status-btn" onclick="setTestStatus('TC-ALT-03', 'progress')">In Prog</button>
+              <button class="status-btn" onclick="setTestStatus('TC-ALT-03', 'fail')">Fail</button>
+              <button class="status-btn" onclick="setTestStatus('TC-ALT-03', 'pass')">Pass</button>
+            </div>
+          </div>
+          <div class="test-details">
+            <div class="detail-row">
+              <span class="detail-label">Step-by-Step Procedure</span>
+              <div class="detail-content">
+                <ol class="test-steps">
+                  <li>In the alert drawer, change the status dropdown from <code>New</code> to <code>Investigating</code>.</li>
+                  <li>Set Analyst Verdict to <code>True Positive</code>.</li>
+                  <li>Enter an Analyst Reason: <code>"Confirmed port scanning probe from internal test"</code>.</li>
+                  <li>Click <strong>Save Incident Review</strong>.</li>
+                  <li>Refresh the page and re-open the alert: verify the updated status, verdict, and reason are persisted in the SQLite database.</li>
+                </ol>
+              </div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Expected Result</span>
+              <div class="expected-box">Incident review updates persist to database and reflect in both UI and API queries immediately.</div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Tester Observations & Evidence</span>
+              <textarea class="notes-input" placeholder="Record incident ID and verified persistent verdict..." onchange="saveNotes('TC-ALT-03', this.value)"></textarea>
+            </div>
+          </div>
+        </div>
+
+        <!-- TC-ALT-04 -->
+        <div class="test-card" id="card-TC-ALT-04" data-id="TC-ALT-04" data-status="untested">
+          <div class="test-card-top">
+            <div>
+              <div class="test-id-group">
+                <span class="test-id">TC-ALT-04</span>
+                <span class="priority-chip p-medium">Medium</span>
+                <span style="font-size: 0.75rem; color: var(--text-dim);">Overview Sync</span>
+              </div>
+              <div class="test-title">Overview Dashboard Alert Feed Synchronization</div>
+            </div>
+            <div class="status-group">
+              <button class="status-btn" onclick="setTestStatus('TC-ALT-04', 'untested')">Reset</button>
+              <button class="status-btn" onclick="setTestStatus('TC-ALT-04', 'progress')">In Prog</button>
+              <button class="status-btn" onclick="setTestStatus('TC-ALT-04', 'fail')">Fail</button>
+              <button class="status-btn" onclick="setTestStatus('TC-ALT-04', 'pass')">Pass</button>
+            </div>
+          </div>
+          <div class="test-details">
+            <div class="detail-row">
+              <span class="detail-label">Step-by-Step Procedure</span>
+              <div class="detail-content">
+                <ol class="test-steps">
+                  <li>Navigate to <code>http://127.0.0.1:5173/overview</code>.</li>
+                  <li>Check the <strong>Open Security Alerts</strong> summary card: verify the count matches the number of New + Investigating alerts.</li>
+                  <li>Check the <strong>Recent Security Alerts</strong> preview list at the bottom of the overview: verify recent incidents appear synchronously.</li>
+                </ol>
+              </div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Expected Result</span>
+              <div class="expected-box">Overview dashboard counters and alerts preview stay synchronized with the alerts database.</div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Tester Observations & Evidence</span>
+              <textarea class="notes-input" placeholder="Confirm count alignment between Overview and Alerts..." onchange="saveNotes('TC-ALT-04', this.value)"></textarea>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+
+    <!-- MODULE 5: Hosts & Connections Inventory -->
+    <section class="module-section" data-module="HST">
+      <div class="module-header" onclick="toggleModule(this)">
+        <div class="module-info">
+          <div class="module-icon">05</div>
+          <div>
+            <div class="module-title">Hosts & Network Connections Inventory</div>
+            <div class="module-desc">Verification of discovered host endpoints, MAC resolution, traffic volume, and peer maps</div>
+          </div>
+        </div>
+        <div class="module-meta">
+          <span class="module-progress-chip" id="prog-HST">0/3 Done</span>
+          <svg class="toggle-arrow" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"></polyline></svg>
+        </div>
+      </div>
+
+      <div class="module-cards">
+
+        <!-- TC-HST-01 -->
+        <div class="test-card" id="card-TC-HST-01" data-id="TC-HST-01" data-status="untested">
+          <div class="test-card-top">
+            <div>
+              <div class="test-id-group">
+                <span class="test-id">TC-HST-01</span>
+                <span class="priority-chip p-high">High</span>
+                <span style="font-size: 0.75rem; color: var(--text-dim);">Hosts Inventory</span>
+              </div>
+              <div class="test-title">Host Discovery & Endpoint Inventory Table</div>
+            </div>
+            <div class="status-group">
+              <button class="status-btn" onclick="setTestStatus('TC-HST-01', 'untested')">Reset</button>
+              <button class="status-btn" onclick="setTestStatus('TC-HST-01', 'progress')">In Prog</button>
+              <button class="status-btn" onclick="setTestStatus('TC-HST-01', 'fail')">Fail</button>
+              <button class="status-btn" onclick="setTestStatus('TC-HST-01', 'pass')">Pass</button>
+            </div>
+          </div>
+          <div class="test-details">
+            <div class="detail-row">
+              <span class="detail-label">Step-by-Step Procedure</span>
+              <div class="detail-content">
+                <ol class="test-steps">
+                  <li>Navigate to <code>http://127.0.0.1:5173/hosts</code>.</li>
+                  <li>Verify the Host Inventory table populates with discovered IP addresses.</li>
+                  <li>Verify internal hosts (e.g. <code>192.168.x.x</code>, <code>10.x.x.x</code>) and external endpoints are distinguished with badges.</li>
+                  <li>Confirm <strong>First Seen</strong> and <strong>Last Seen</strong> timestamps are properly formatted.</li>
+                </ol>
+              </div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Expected Result</span>
+              <div class="expected-box">Hosts inventory renders all active communicating endpoints with correct categorization and activity metrics.</div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Quick API Command</span>
+              <div class="cli-box">
+                <span>curl -s http://127.0.0.1:8000/api/hosts</span>
+                <button class="copy-btn" onclick="copyCli(this)">Copy</button>
+              </div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Tester Observations & Evidence</span>
+              <textarea class="notes-input" placeholder="Record discovered host count and sample IPs..." onchange="saveNotes('TC-HST-01', this.value)"></textarea>
+            </div>
+          </div>
+        </div>
+
+        <!-- TC-HST-02 -->
+        <div class="test-card" id="card-TC-HST-02" data-id="TC-HST-02" data-status="untested">
+          <div class="test-card-top">
+            <div>
+              <div class="test-id-group">
+                <span class="test-id">TC-HST-02</span>
+                <span class="priority-chip p-medium">Medium</span>
+                <span style="font-size: 0.75rem; color: var(--text-dim);">Traffic Profiles</span>
+              </div>
+              <div class="test-title">Host Traffic Profiles & In/Out Byte Metrics</div>
+            </div>
+            <div class="status-group">
+              <button class="status-btn" onclick="setTestStatus('TC-HST-02', 'untested')">Reset</button>
+              <button class="status-btn" onclick="setTestStatus('TC-HST-02', 'progress')">In Prog</button>
+              <button class="status-btn" onclick="setTestStatus('TC-HST-02', 'fail')">Fail</button>
+              <button class="status-btn" onclick="setTestStatus('TC-HST-02', 'pass')">Pass</button>
+            </div>
+          </div>
+          <div class="test-details">
+            <div class="detail-row">
+              <span class="detail-label">Step-by-Step Procedure</span>
+              <div class="detail-content">
+                <ol class="test-steps">
+                  <li>Click on a host IP in the inventory table.</li>
+                  <li>Verify detailed profile displays: Total Bytes Sent, Total Bytes Received, Total Packets, and Active Connections.</li>
+                  <li>Confirm values are non-negative and formatted with byte units (KB, MB, GB).</li>
+                </ol>
+              </div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Expected Result</span>
+              <div class="expected-box">Traffic metrics for each host compute accurately from aggregated bidirectional telemetry.</div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Tester Observations & Evidence</span>
+              <textarea class="notes-input" placeholder="Notes on host traffic profile data..." onchange="saveNotes('TC-HST-02', this.value)"></textarea>
+            </div>
+          </div>
+        </div>
+
+        <!-- TC-HST-03 -->
+        <div class="test-card" id="card-TC-HST-03" data-id="TC-HST-03" data-status="untested">
+          <div class="test-card-top">
+            <div>
+              <div class="test-id-group">
+                <span class="test-id">TC-HST-03</span>
+                <span class="priority-chip p-medium">Medium</span>
+                <span style="font-size: 0.75rem; color: var(--text-dim);">Search & Filter</span>
+              </div>
+              <div class="test-title">Host Search by IP, Subnet, or Status</div>
+            </div>
+            <div class="status-group">
+              <button class="status-btn" onclick="setTestStatus('TC-HST-03', 'untested')">Reset</button>
+              <button class="status-btn" onclick="setTestStatus('TC-HST-03', 'progress')">In Prog</button>
+              <button class="status-btn" onclick="setTestStatus('TC-HST-03', 'fail')">Fail</button>
+              <button class="status-btn" onclick="setTestStatus('TC-HST-03', 'pass')">Pass</button>
+            </div>
+          </div>
+          <div class="test-details">
+            <div class="detail-row">
+              <span class="detail-label">Step-by-Step Procedure</span>
+              <div class="detail-content">
+                <ol class="test-steps">
+                  <li>In the host search input, type a specific IP (e.g. <code>192.168.</code>).</li>
+                  <li>Verify the table filters in real time to show only matching hosts.</li>
+                  <li>Clear search and filter by Risk Level (Compromised / Suspicious / Normal).</li>
+                </ol>
+              </div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Expected Result</span>
+              <div class="expected-box">Host filtering responds dynamically with zero search lag.</div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Tester Observations & Evidence</span>
+              <textarea class="notes-input" placeholder="Notes on host search behavior..." onchange="saveNotes('TC-HST-03', this.value)"></textarea>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+
+    <!-- MODULE 6: Model Insights & Explainability -->
+    <section class="module-section" data-module="ML">
+      <div class="module-header" onclick="toggleModule(this)">
+        <div class="module-info">
+          <div class="module-icon">06</div>
+          <div>
+            <div class="module-title">Model Insights & Machine Learning Governance</div>
+            <div class="module-desc">Verification of feature importance rankings, model versioning, confusion matrix, and safety drift monitoring</div>
+          </div>
+        </div>
+        <div class="module-meta">
+          <span class="module-progress-chip" id="prog-ML">0/3 Done</span>
+          <svg class="toggle-arrow" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"></polyline></svg>
+        </div>
+      </div>
+
+      <div class="module-cards">
+
+        <!-- TC-ML-01 -->
+        <div class="test-card" id="card-TC-ML-01" data-id="TC-ML-01" data-status="untested">
+          <div class="test-card-top">
+            <div>
+              <div class="test-id-group">
+                <span class="test-id">TC-ML-01</span>
+                <span class="priority-chip p-high">High</span>
+                <span style="font-size: 0.75rem; color: var(--text-dim);">Model Governance</span>
+              </div>
+              <div class="test-title">Model Governance Metrics & Version Registry</div>
+            </div>
+            <div class="status-group">
+              <button class="status-btn" onclick="setTestStatus('TC-ML-01', 'untested')">Reset</button>
+              <button class="status-btn" onclick="setTestStatus('TC-ML-01', 'progress')">In Prog</button>
+              <button class="status-btn" onclick="setTestStatus('TC-ML-01', 'fail')">Fail</button>
+              <button class="status-btn" onclick="setTestStatus('TC-ML-01', 'pass')">Pass</button>
+            </div>
+          </div>
+          <div class="test-details">
+            <div class="detail-row">
+              <span class="detail-label">Step-by-Step Procedure</span>
+              <div class="detail-content">
+                <ol class="test-steps">
+                  <li>Navigate to <code>http://127.0.0.1:5173/model-insights</code>.</li>
+                  <li>Verify Model Governance card displays: Active Model Version (e.g. <code>v2.5.0-rf-ensemble</code>), Classifier Algorithm (Random Forest + Isolation Forest), Accuracy (98.x%), and F1-Score.</li>
+                  <li>Confirm Last Training Timestamp and Training Samples count are populated.</li>
+                </ol>
+              </div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Expected Result</span>
+              <div class="expected-box">Model governance dashboard exposes model metadata, training statistics, and compliance metrics.</div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Quick API Command</span>
+              <div class="cli-box">
+                <span>curl -s http://127.0.0.1:8000/api/model/insights</span>
+                <button class="copy-btn" onclick="copyCli(this)">Copy</button>
+              </div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Tester Observations & Evidence</span>
+              <textarea class="notes-input" placeholder="Record model version and accuracy metrics..." onchange="saveNotes('TC-ML-01', this.value)"></textarea>
+            </div>
+          </div>
+        </div>
+
+        <!-- TC-ML-02 -->
+        <div class="test-card" id="card-TC-ML-02" data-id="TC-ML-02" data-status="untested">
+          <div class="test-card-top">
+            <div>
+              <div class="test-id-group">
+                <span class="test-id">TC-ML-02</span>
+                <span class="priority-chip p-medium">Medium</span>
+                <span style="font-size: 0.75rem; color: var(--text-dim);">Explainability</span>
+              </div>
+              <div class="test-title">Feature Importance Rankings & Weight Inspection</div>
+            </div>
+            <div class="status-group">
+              <button class="status-btn" onclick="setTestStatus('TC-ML-02', 'untested')">Reset</button>
+              <button class="status-btn" onclick="setTestStatus('TC-ML-02', 'progress')">In Prog</button>
+              <button class="status-btn" onclick="setTestStatus('TC-ML-02', 'fail')">Fail</button>
+              <button class="status-btn" onclick="setTestStatus('TC-ML-02', 'pass')">Pass</button>
+            </div>
+          </div>
+          <div class="test-details">
+            <div class="detail-row">
+              <span class="detail-label">Step-by-Step Procedure</span>
+              <div class="detail-content">
+                <ol class="test-steps">
+                  <li>Inspect the <strong>Top Predictive Flow Features</strong> bar chart on the Model Insights page.</li>
+                  <li>Verify features (e.g. <code>flow_duration</code>, <code>syn_flag_ratio</code>, <code>packet_length_mean</code>, <code>fwd_bytes_ratio</code>) are ranked by relative importance weight.</li>
+                  <li>Hover over bars to verify importance percentages.</li>
+                </ol>
+              </div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Expected Result</span>
+              <div class="expected-box">Feature importances render with readable labels and normalized percentage bars.</div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Tester Observations & Evidence</span>
+              <textarea class="notes-input" placeholder="Record top 3 predictive features..." onchange="saveNotes('TC-ML-02', this.value)"></textarea>
+            </div>
+          </div>
+        </div>
+
+        <!-- TC-ML-03 -->
+        <div class="test-card" id="card-TC-ML-03" data-id="TC-ML-03" data-status="untested">
+          <div class="test-card-top">
+            <div>
+              <div class="test-id-group">
+                <span class="test-id">TC-ML-03</span>
+                <span class="priority-chip p-medium">Medium</span>
+                <span style="font-size: 0.75rem; color: var(--text-dim);">Classification Metrics</span>
+              </div>
+              <div class="test-title">Confusion Matrix & Per-Class Performance</div>
+            </div>
+            <div class="status-group">
+              <button class="status-btn" onclick="setTestStatus('TC-ML-03', 'untested')">Reset</button>
+              <button class="status-btn" onclick="setTestStatus('TC-ML-03', 'progress')">In Prog</button>
+              <button class="status-btn" onclick="setTestStatus('TC-ML-03', 'fail')">Fail</button>
+              <button class="status-btn" onclick="setTestStatus('TC-ML-03', 'pass')">Pass</button>
+            </div>
+          </div>
+          <div class="test-details">
+            <div class="detail-row">
+              <span class="detail-label">Step-by-Step Procedure</span>
+              <div class="detail-content">
+                <ol class="test-steps">
+                  <li>Review the Confusion Matrix heatmap and class metrics table on <code>/model-insights</code>.</li>
+                  <li>Verify Precision, Recall, and F1 scores are calculated for each attack class (Benign, PortScan, DDoS, BruteForce).</li>
+                </ol>
+              </div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Expected Result</span>
+              <div class="expected-box">Matrix cells display true positives and false positives clearly with color intensity mapping.</div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Tester Observations & Evidence</span>
+              <textarea class="notes-input" placeholder="Notes on confusion matrix values..." onchange="saveNotes('TC-ML-03', this.value)"></textarea>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+
+    <!-- MODULE 7: Automated Response & Containment -->
+    <section class="module-section" data-module="RSP">
+      <div class="module-header" onclick="toggleModule(this)">
+        <div class="module-info">
+          <div class="module-icon">07</div>
+          <div>
+            <div class="module-title">Automated Response & Active Defense (Containment)</div>
+            <div class="module-desc">Verification of firewall blocking, reversible unblock actions, and immutable audit logs</div>
+          </div>
+        </div>
+        <div class="module-meta">
+          <span class="module-progress-chip" id="prog-RSP">0/3 Done</span>
+          <svg class="toggle-arrow" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"></polyline></svg>
+        </div>
+      </div>
+
+      <div class="module-cards">
+
+        <!-- TC-RSP-01 -->
+        <div class="test-card" id="card-TC-RSP-01" data-id="TC-RSP-01" data-status="untested">
+          <div class="test-card-top">
+            <div>
+              <div class="test-id-group">
+                <span class="test-id">TC-RSP-01</span>
+                <span class="priority-chip p-critical">Critical</span>
+                <span style="font-size: 0.75rem; color: var(--text-dim);">Containment</span>
+              </div>
+              <div class="test-title">IP Containment / Firewall Block Action Execution</div>
+            </div>
+            <div class="status-group">
+              <button class="status-btn" onclick="setTestStatus('TC-RSP-01', 'untested')">Reset</button>
+              <button class="status-btn" onclick="setTestStatus('TC-RSP-01', 'progress')">In Prog</button>
+              <button class="status-btn" onclick="setTestStatus('TC-RSP-01', 'fail')">Fail</button>
+              <button class="status-btn" onclick="setTestStatus('TC-RSP-01', 'pass')">Pass</button>
+            </div>
+          </div>
+          <div class="test-details">
+            <div class="detail-row">
+              <span class="detail-label">Step-by-Step Procedure</span>
+              <div class="detail-content">
+                <ol class="test-steps">
+                  <li>Navigate to <code>http://127.0.0.1:5173/investigation</code> or open an alert in <code>/alerts</code>.</li>
+                  <li>Select a malicious source IP (e.g. <code>198.51.100.45</code>).</li>
+                  <li>Click <strong>Isolate Host / Block IP</strong>.</li>
+                  <li>Confirm the containment action modal.</li>
+                  <li>Verify success toast appears confirming block execution.</li>
+                  <li>Verify the IP now appears under <strong>Active Containment Rules</strong> with a <code>BLOCKED</code> status tag.</li>
+                </ol>
+              </div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Expected Result</span>
+              <div class="expected-box">Containment command succeeds, updates active block registry, and adds target IP to active defense rules.</div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Tester Observations & Evidence</span>
+              <textarea class="notes-input" placeholder="Record blocked IP and response payload..." onchange="saveNotes('TC-RSP-01', this.value)"></textarea>
+            </div>
+          </div>
+        </div>
+
+        <!-- TC-RSP-02 -->
+        <div class="test-card" id="card-TC-RSP-02" data-id="TC-RSP-02" data-status="untested">
+          <div class="test-card-top">
+            <div>
+              <div class="test-id-group">
+                <span class="test-id">TC-RSP-02</span>
+                <span class="priority-chip p-high">High</span>
+                <span style="font-size: 0.75rem; color: var(--text-dim);">Reversibility</span>
+              </div>
+              <div class="test-title">Reversible Defense (Unblock / Restore Host Access)</div>
+            </div>
+            <div class="status-group">
+              <button class="status-btn" onclick="setTestStatus('TC-RSP-02', 'untested')">Reset</button>
+              <button class="status-btn" onclick="setTestStatus('TC-RSP-02', 'progress')">In Prog</button>
+              <button class="status-btn" onclick="setTestStatus('TC-RSP-02', 'fail')">Fail</button>
+              <button class="status-btn" onclick="setTestStatus('TC-RSP-02', 'pass')">Pass</button>
+            </div>
+          </div>
+          <div class="test-details">
+            <div class="detail-row">
+              <span class="detail-label">Step-by-Step Procedure</span>
+              <div class="detail-content">
+                <ol class="test-steps">
+                  <li>In the Active Containment list, find the previously blocked IP.</li>
+                  <li>Click <strong>Unblock / Release Containment</strong>.</li>
+                  <li>Confirm removal.</li>
+                  <li>Verify the rule is removed from the active block list and network traffic from that IP is permitted again.</li>
+                </ol>
+              </div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Expected Result</span>
+              <div class="expected-box">Containment is safely reversed, restoring host access immediately.</div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Tester Observations & Evidence</span>
+              <textarea class="notes-input" placeholder="Notes on unblock action..." onchange="saveNotes('TC-RSP-02', this.value)"></textarea>
+            </div>
+          </div>
+        </div>
+
+        <!-- TC-RSP-03 -->
+        <div class="test-card" id="card-TC-RSP-03" data-id="TC-RSP-03" data-status="untested">
+          <div class="test-card-top">
+            <div>
+              <div class="test-id-group">
+                <span class="test-id">TC-RSP-03</span>
+                <span class="priority-chip p-high">High</span>
+                <span style="font-size: 0.75rem; color: var(--text-dim);">Audit Trail</span>
+              </div>
+              <div class="test-title">Immutable SOC Audit Trail Logging</div>
+            </div>
+            <div class="status-group">
+              <button class="status-btn" onclick="setTestStatus('TC-RSP-03', 'untested')">Reset</button>
+              <button class="status-btn" onclick="setTestStatus('TC-RSP-03', 'progress')">In Prog</button>
+              <button class="status-btn" onclick="setTestStatus('TC-RSP-03', 'fail')">Fail</button>
+              <button class="status-btn" onclick="setTestStatus('TC-RSP-03', 'pass')">Pass</button>
+            </div>
+          </div>
+          <div class="test-details">
+            <div class="detail-row">
+              <span class="detail-label">Step-by-Step Procedure</span>
+              <div class="detail-content">
+                <ol class="test-steps">
+                  <li>Navigate to the Audit Log view on <code>/investigation</code> or <code>/settings</code>.</li>
+                  <li>Verify every containment and release action is logged with: <code>log_id</code>, <code>timestamp</code>, <code>operator</code>, <code>action_type</code> (BLOCK_IP / UNBLOCK_IP), <code>target_ip</code>, and <code>result</code> (SUCCESS).</li>
+                  <li>Confirm audit entries cannot be modified or deleted via user UI.</li>
+                </ol>
+              </div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Expected Result</span>
+              <div class="expected-box">All active response operations produce permanent forensic audit trail entries.</div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Tester Observations & Evidence</span>
+              <textarea class="notes-input" placeholder="Confirm audit log entries..." onchange="saveNotes('TC-RSP-03', this.value)"></textarea>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+
+    <!-- MODULE 8: System Configuration & State Reset -->
+    <section class="module-section" data-module="SET">
+      <div class="module-header" onclick="toggleModule(this)">
+        <div class="module-info">
+          <div class="module-icon">08</div>
+          <div>
+            <div class="module-title">System Settings, Configuration & Health</div>
+            <div class="module-desc">Verification of system health endpoints, theme switching, and demo data re-seeding</div>
+          </div>
+        </div>
+        <div class="module-meta">
+          <span class="module-progress-chip" id="prog-SET">0/3 Done</span>
+          <svg class="toggle-arrow" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"></polyline></svg>
+        </div>
+      </div>
+
+      <div class="module-cards">
+
+        <!-- TC-SET-01 -->
+        <div class="test-card" id="card-TC-SET-01" data-id="TC-SET-01" data-status="untested">
+          <div class="test-card-top">
+            <div>
+              <div class="test-id-group">
+                <span class="test-id">TC-SET-01</span>
+                <span class="priority-chip p-medium">Medium</span>
+                <span style="font-size: 0.75rem; color: var(--text-dim);">Settings Page</span>
+              </div>
+              <div class="test-title">Backend Connectivity & System Health Checks</div>
+            </div>
+            <div class="status-group">
+              <button class="status-btn" onclick="setTestStatus('TC-SET-01', 'untested')">Reset</button>
+              <button class="status-btn" onclick="setTestStatus('TC-SET-01', 'progress')">In Prog</button>
+              <button class="status-btn" onclick="setTestStatus('TC-SET-01', 'fail')">Fail</button>
+              <button class="status-btn" onclick="setTestStatus('TC-SET-01', 'pass')">Pass</button>
+            </div>
+          </div>
+          <div class="test-details">
+            <div class="detail-row">
+              <span class="detail-label">Step-by-Step Procedure</span>
+              <div class="detail-content">
+                <ol class="test-steps">
+                  <li>Navigate to <code>http://127.0.0.1:5173/settings</code>.</li>
+                  <li>Verify Backend API Status displays <code>Connected</code> (200 OK) pointing to <code>http://127.0.0.1:8000</code>.</li>
+                  <li>Verify SQLite Database Health and TShark Engine binary locations are validated.</li>
+                </ol>
+              </div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Expected Result</span>
+              <div class="expected-box">All subsystem health badges (API, DB, Stream, Detector) show green healthy status.</div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Tester Observations & Evidence</span>
+              <textarea class="notes-input" placeholder="Record component health statuses..." onchange="saveNotes('TC-SET-01', this.value)"></textarea>
+            </div>
+          </div>
+        </div>
+
+        <!-- TC-SET-02 -->
+        <div class="test-card" id="card-TC-SET-02" data-id="TC-SET-02" data-status="untested">
+          <div class="test-card-top">
+            <div>
+              <div class="test-id-group">
+                <span class="test-id">TC-SET-02</span>
+                <span class="priority-chip p-high">High</span>
+                <span style="font-size: 0.75rem; color: var(--text-dim);">Database Maintenance</span>
+              </div>
+              <div class="test-title">Demo Baseline Data Reset & Re-seeding</div>
+            </div>
+            <div class="status-group">
+              <button class="status-btn" onclick="setTestStatus('TC-SET-02', 'untested')">Reset</button>
+              <button class="status-btn" onclick="setTestStatus('TC-SET-02', 'progress')">In Prog</button>
+              <button class="status-btn" onclick="setTestStatus('TC-SET-02', 'fail')">Fail</button>
+              <button class="status-btn" onclick="setTestStatus('TC-SET-02', 'pass')">Pass</button>
+            </div>
+          </div>
+          <div class="test-details">
+            <div class="detail-row">
+              <span class="detail-label">Step-by-Step Procedure</span>
+              <div class="detail-content">
+                <ol class="test-steps">
+                  <li>In Settings, locate the <strong>Reset Demonstration Environment</strong> button.</li>
+                  <li>Click Reset and confirm the dialog.</li>
+                  <li>Verify database tables are purged and re-seeded with realistic baseline incidents (INC-1001 to INC-1004).</li>
+                  <li>Navigate back to <code>/alerts</code> and confirm baseline incidents load cleanly.</li>
+                </ol>
+              </div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Expected Result</span>
+              <div class="expected-box">Database cleanly re-seeds default demonstration state without throwing schema or integrity errors.</div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Quick API Command</span>
+              <div class="cli-box">
+                <span>curl -X POST http://127.0.0.1:8000/api/system/reset-demo</span>
+                <button class="copy-btn" onclick="copyCli(this)">Copy</button>
+              </div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Tester Observations & Evidence</span>
+              <textarea class="notes-input" placeholder="Notes on reset result..." onchange="saveNotes('TC-SET-02', this.value)"></textarea>
+            </div>
+          </div>
+        </div>
+
+        <!-- TC-SET-03 -->
+        <div class="test-card" id="card-TC-SET-03" data-id="TC-SET-03" data-status="untested">
+          <div class="test-card-top">
+            <div>
+              <div class="test-id-group">
+                <span class="test-id">TC-SET-03</span>
+                <span class="priority-chip p-medium">Medium</span>
+                <span style="font-size: 0.75rem; color: var(--text-dim);">UI & Responsiveness</span>
+              </div>
+              <div class="test-title">Responsive Layout & Sidebar Navigation</div>
+            </div>
+            <div class="status-group">
+              <button class="status-btn" onclick="setTestStatus('TC-SET-03', 'untested')">Reset</button>
+              <button class="status-btn" onclick="setTestStatus('TC-SET-03', 'progress')">In Prog</button>
+              <button class="status-btn" onclick="setTestStatus('TC-SET-03', 'fail')">Fail</button>
+              <button class="status-btn" onclick="setTestStatus('TC-SET-03', 'pass')">Pass</button>
+            </div>
+          </div>
+          <div class="test-details">
+            <div class="detail-row">
+              <span class="detail-label">Step-by-Step Procedure</span>
+              <div class="detail-content">
+                <ol class="test-steps">
+                  <li>Resize browser window down to mobile/tablet width (< 768px).</li>
+                  <li>Verify sidebar collapses to hamburger menu or mobile drawer.</li>
+                  <li>Test all navigation links: Overview, Live Network, Security Alerts, Threats, Analytics, Hosts, Model Insights, Settings.</li>
+                  <li>Verify navigation operates without layout breaks or horizontal overflow.</li>
+                </ol>
+              </div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Expected Result</span>
+              <div class="expected-box">All views adapt cleanly to varying viewport widths with consistent dark SOC styling.</div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Tester Observations & Evidence</span>
+              <textarea class="notes-input" placeholder="Notes on mobile/tablet view rendering..." onchange="saveNotes('TC-SET-03', this.value)"></textarea>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+
+    <!-- MODULE 9: REST API & Backend Automated Test Suite -->
+    <section class="module-section" data-module="API">
+      <div class="module-header" onclick="toggleModule(this)">
+        <div class="module-info">
+          <div class="module-icon">09</div>
+          <div>
+            <div class="module-title">REST API Specifications & Automated Test Suite</div>
+            <div class="module-desc">Verification of FastAPI OpenAPI docs, endpoint status codes, and test suite execution</div>
+          </div>
+        </div>
+        <div class="module-meta">
+          <span class="module-progress-chip" id="prog-API">0/5 Done</span>
+          <svg class="toggle-arrow" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"></polyline></svg>
+        </div>
+      </div>
+
+      <div class="module-cards">
+
+        <!-- TC-API-01 -->
+        <div class="test-card" id="card-TC-API-01" data-id="TC-API-01" data-status="untested">
+          <div class="test-card-top">
+            <div>
+              <div class="test-id-group">
+                <span class="test-id">TC-API-01</span>
+                <span class="priority-chip p-high">High</span>
+                <span style="font-size: 0.75rem; color: var(--text-dim);">Documentation</span>
+              </div>
+              <div class="test-title">FastAPI Swagger UI & OpenAPI Specification</div>
+            </div>
+            <div class="status-group">
+              <button class="status-btn" onclick="setTestStatus('TC-API-01', 'untested')">Reset</button>
+              <button class="status-btn" onclick="setTestStatus('TC-API-01', 'progress')">In Prog</button>
+              <button class="status-btn" onclick="setTestStatus('TC-API-01', 'fail')">Fail</button>
+              <button class="status-btn" onclick="setTestStatus('TC-API-01', 'pass')">Pass</button>
+            </div>
+          </div>
+          <div class="test-details">
+            <div class="detail-row">
+              <span class="detail-label">Step-by-Step Procedure</span>
+              <div class="detail-content">
+                <ol class="test-steps">
+                  <li>Navigate to <code>http://127.0.0.1:8000/docs</code> in your browser.</li>
+                  <li>Verify Swagger UI loads with API title: <code>SentinelAI Cloud SOC</code> v2.5.0.</li>
+                  <li>Inspect endpoints under tags: <code>collector</code>, <code>incidents</code>, <code>metrics</code>, <code>model</code>, <code>system</code>.</li>
+                  <li>Execute "Try it out" on <code>GET /api/collector/status</code>: confirm 200 OK JSON response.</li>
+                </ol>
+              </div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Expected Result</span>
+              <div class="expected-box">OpenAPI documentation renders without schema errors and all endpoints execute interactively.</div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Tester Observations & Evidence</span>
+              <textarea class="notes-input" placeholder="Confirm Swagger UI accessibility..." onchange="saveNotes('TC-API-01', this.value)"></textarea>
+            </div>
+          </div>
+        </div>
+
+        <!-- TC-API-02 -->
+        <div class="test-card" id="card-TC-API-02" data-id="TC-API-02" data-status="untested">
+          <div class="test-card-top">
+            <div>
+              <div class="test-id-group">
+                <span class="test-id">TC-API-02</span>
+                <span class="priority-chip p-critical">Critical</span>
+                <span style="font-size: 0.75rem; color: var(--text-dim);">Collector Endpoints</span>
+              </div>
+              <div class="test-title">Collector Interface & Status JSON Contracts</div>
+            </div>
+            <div class="status-group">
+              <button class="status-btn" onclick="setTestStatus('TC-API-02', 'untested')">Reset</button>
+              <button class="status-btn" onclick="setTestStatus('TC-API-02', 'progress')">In Prog</button>
+              <button class="status-btn" onclick="setTestStatus('TC-API-02', 'fail')">Fail</button>
+              <button class="status-btn" onclick="setTestStatus('TC-API-02', 'pass')">Pass</button>
+            </div>
+          </div>
+          <div class="test-details">
+            <div class="detail-row">
+              <span class="detail-label">Step-by-Step Procedure</span>
+              <div class="detail-content">
+                <ol class="test-steps">
+                  <li>Query <code>GET /api/collector/interfaces</code>: verify response matches schema <code>{ "interfaces": [{ "name": "4", "description": "Wi-Fi (10.10.213.36)", "alias": "Wi-Fi", "ip": "...", "is_active": true }] }</code>.</li>
+                  <li>Query <code>GET /api/collector/status</code>: verify fields <code>status</code>, <code>uptime_seconds</code>, <code>packet_count</code>, <code>capture_interface</code>, and <code>tshark_version</code> are present.</li>
+                </ol>
+              </div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Expected Result</span>
+              <div class="expected-box">JSON responses match frontend TypeScript interfaces exactly with zero missing fields.</div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Tester Observations & Evidence</span>
+              <textarea class="notes-input" placeholder="Record schema validation notes..." onchange="saveNotes('TC-API-02', this.value)"></textarea>
+            </div>
+          </div>
+        </div>
+
+        <!-- TC-API-03 -->
+        <div class="test-card" id="card-TC-API-03" data-id="TC-API-03" data-status="untested">
+          <div class="test-card-top">
+            <div>
+              <div class="test-id-group">
+                <span class="test-id">TC-API-03</span>
+                <span class="priority-chip p-medium">Medium</span>
+                <span style="font-size: 0.75rem; color: var(--text-dim);">Dataset Validation</span>
+              </div>
+              <div class="test-title">Dataset Overview & Schema Validation Endpoint</div>
+            </div>
+            <div class="status-group">
+              <button class="status-btn" onclick="setTestStatus('TC-API-03', 'untested')">Reset</button>
+              <button class="status-btn" onclick="setTestStatus('TC-API-03', 'progress')">In Prog</button>
+              <button class="status-btn" onclick="setTestStatus('TC-API-03', 'fail')">Fail</button>
+              <button class="status-btn" onclick="setTestStatus('TC-API-03', 'pass')">Pass</button>
+            </div>
+          </div>
+          <div class="test-details">
+            <div class="detail-row">
+              <span class="detail-label">Step-by-Step Procedure</span>
+              <div class="detail-content">
+                <ol class="test-steps">
+                  <li>Query <code>GET /api/dataset/overview</code>: verify training feature list, row count, and dataset summary are returned.</li>
+                  <li>Query <code>POST /api/dataset/validate</code> with valid flow payload: confirm validation returns <code>valid: true</code>.</li>
+                </ol>
+              </div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Expected Result</span>
+              <div class="expected-box">Dataset endpoints return 200 OK with schema definition and column validation metadata.</div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Test Command</span>
+              <div class="cli-box">
+                <span>curl -s http://127.0.0.1:8000/api/dataset/overview</span>
+                <button class="copy-btn" onclick="copyCli(this)">Copy</button>
+              </div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Tester Observations & Evidence</span>
+              <textarea class="notes-input" placeholder="Notes on dataset overview response..." onchange="saveNotes('TC-API-03', this.value)"></textarea>
+            </div>
+          </div>
+        </div>
+
+        <!-- TC-API-04 -->
+        <div class="test-card" id="card-TC-API-04" data-id="TC-API-04" data-status="untested">
+          <div class="test-card-top">
+            <div>
+              <div class="test-id-group">
+                <span class="test-id">TC-API-04</span>
+                <span class="priority-chip p-high">High</span>
+                <span style="font-size: 0.75rem; color: var(--text-dim);">Error Handling</span>
+              </div>
+              <div class="test-title">API Error Codes & Conflict Rejection</div>
+            </div>
+            <div class="status-group">
+              <button class="status-btn" onclick="setTestStatus('TC-API-04', 'untested')">Reset</button>
+              <button class="status-btn" onclick="setTestStatus('TC-API-04', 'progress')">In Prog</button>
+              <button class="status-btn" onclick="setTestStatus('TC-API-04', 'fail')">Fail</button>
+              <button class="status-btn" onclick="setTestStatus('TC-API-04', 'pass')">Pass</button>
+            </div>
+          </div>
+          <div class="test-details">
+            <div class="detail-row">
+              <span class="detail-label">Step-by-Step Procedure</span>
+              <div class="detail-content">
+                <ol class="test-steps">
+                  <li>Send an invalid start payload to <code>/api/collector/start</code> without parameters.</li>
+                  <li>If a session is already RUNNING, send start with <code>force: false</code>: verify <strong>409 Conflict</strong> is returned with explanation.</li>
+                  <li>Send a request to a non-existent route: verify <strong>404 Not Found</strong> is returned formatted cleanly.</li>
+                </ol>
+              </div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Expected Result</span>
+              <div class="expected-box">Appropriate HTTP status codes (400, 404, 409) returned with JSON detail descriptions.</div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Tester Observations & Evidence</span>
+              <textarea class="notes-input" placeholder="Record error handling verification..." onchange="saveNotes('TC-API-04', this.value)"></textarea>
+            </div>
+          </div>
+        </div>
+
+        <!-- TC-API-05 -->
+        <div class="test-card" id="card-TC-API-05" data-id="TC-API-05" data-status="untested">
+          <div class="test-card-top">
+            <div>
+              <div class="test-id-group">
+                <span class="test-id">TC-API-05</span>
+                <span class="priority-chip p-critical">Critical</span>
+                <span style="font-size: 0.75rem; color: var(--text-dim);">Automated Suite</span>
+              </div>
+              <div class="test-title">Full Automated Pytest Suite Execution</div>
+            </div>
+            <div class="status-group">
+              <button class="status-btn" onclick="setTestStatus('TC-API-05', 'untested')">Reset</button>
+              <button class="status-btn" onclick="setTestStatus('TC-API-05', 'progress')">In Prog</button>
+              <button class="status-btn" onclick="setTestStatus('TC-API-05', 'fail')">Fail</button>
+              <button class="status-btn" onclick="setTestStatus('TC-API-05', 'pass')">Pass</button>
+            </div>
+          </div>
+          <div class="test-details">
+            <div class="detail-row">
+              <span class="detail-label">Step-by-Step Procedure</span>
+              <div class="detail-content">
+                <ol class="test-steps">
+                  <li>Open a terminal in the project root directory.</li>
+                  <li>Run the complete test suite: <code>python -m pytest tests/ -q</code>.</li>
+                  <li>Verify all 132+ test cases across PCAP parsing, ML pipeline, detector, stream engine, and REST endpoints pass.</li>
+                </ol>
+              </div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Expected Result</span>
+              <div class="expected-box">All automated tests pass cleanly with 0 failures.</div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Test Command</span>
+              <div class="cli-box">
+                <span>python -m pytest tests/ -q</span>
+                <button class="copy-btn" onclick="copyCli(this)">Copy</button>
+              </div>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Tester Observations & Evidence</span>
+              <textarea class="notes-input" placeholder="Record pytest output summary..." onchange="saveNotes('TC-API-05', this.value)"></textarea>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+  </div>
+
+  <!-- Footer -->
+  <footer>
+    <p>CYBERplus SOC Quality Assurance Playbook &bull; Interactive Execution Dashboard &bull; Generated for Pair Programming Review</p>
+    <p style="margin-top: 0.35rem; font-size: 0.75rem;">State is automatically persisted to local browser storage (<code>localStorage</code>).</p>
+  </footer>
+
+</div>
+
+<!-- Interactive Client-side Script -->
+<script>
+  const STORAGE_KEY = 'cyberplus_qa_testplan_state_v1';
+  let testState = {};
+  let currentStatusFilter = 'ALL';
+
+  function initTestPlan() {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) {
+        testState = JSON.parse(saved);
+      }
+    } catch (e) {
+      console.error('Failed to load saved state', e);
+      testState = {};
+    }
+
+    // Apply saved states to DOM
+    document.querySelectorAll('.test-card').forEach(card => {
+      const id = card.getAttribute('data-id');
+      const item = testState[id] || { status: 'untested', notes: '' };
+      
+      applyCardStatus(id, item.status);
+      
+      const textarea = card.querySelector('.notes-input');
+      if (textarea && item.notes) {
+        textarea.value = item.notes;
+      }
+    });
+
+    updateStatistics();
+  }
+
+  function setTestStatus(testId, status) {
+    if (!testState[testId]) {
+      testState[testId] = { status: 'untested', notes: '' };
+    }
+    testState[testId].status = status;
+    saveState();
+    applyCardStatus(testId, status);
+    updateStatistics();
+  }
+
+  function saveNotes(testId, notes) {
+    if (!testState[testId]) {
+      testState[testId] = { status: 'untested', notes: '' };
+    }
+    testState[testId].notes = notes;
+    saveState();
+  }
+
+  function applyCardStatus(testId, status) {
+    const card = document.getElementById('card-' + testId);
+    if (!card) return;
+
+    card.setAttribute('data-status', status);
+    card.classList.remove('passed', 'failed', 'inprogress');
+
+    if (status === 'pass') card.classList.add('passed');
+    else if (status === 'fail') card.classList.add('failed');
+    else if (status === 'progress') card.classList.add('inprogress');
+
+    // Update button states
+    const btnGroup = card.querySelector('.status-group');
+    if (btnGroup) {
+      btnGroup.querySelectorAll('.status-btn').forEach(btn => {
+        btn.classList.remove('selected-pass', 'selected-fail', 'selected-progress', 'selected-untested');
+        const text = btn.innerText.toLowerCase();
+        if (status === 'pass' && text.includes('pass')) btn.classList.add('selected-pass');
+        if (status === 'fail' && text.includes('fail')) btn.classList.add('selected-fail');
+        if (status === 'progress' && text.includes('prog')) btn.classList.add('selected-progress');
+        if (status === 'untested' && text.includes('reset')) btn.classList.add('selected-untested');
+      });
+    }
+
+    filterCards();
+  }
+
+  function saveState() {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(testState));
+    } catch (e) {
+      console.error('Failed to save state', e);
+    }
+  }
+
+  function updateStatistics() {
+    const totalCards = document.querySelectorAll('.test-card').length;
+    let passed = 0;
+    let failed = 0;
+    let progress = 0;
+
+    Object.keys(testState).forEach(id => {
+      const st = testState[id].status;
+      if (st === 'pass') passed++;
+      else if (st === 'fail') failed++;
+      else if (st === 'progress') progress++;
+    });
+
+    const completed = passed + failed;
+    const pct = totalCards > 0 ? Math.round((completed / totalCards) * 100) : 0;
+
+    document.getElementById('stat-total').innerText = totalCards;
+    document.getElementById('stat-passed').innerText = passed;
+    document.getElementById('stat-failed').innerText = failed;
+    document.getElementById('stat-progress').innerText = progress;
+    document.getElementById('stat-percent').innerText = pct + '%';
+
+    document.getElementById('bar-passed').style.width = ((passed / totalCards) * 100) + '%';
+    document.getElementById('bar-failed').style.width = ((failed / totalCards) * 100) + '%';
+    document.getElementById('bar-progress').style.width = ((progress / totalCards) * 100) + '%';
+    document.getElementById('bar-percent').style.width = pct + '%';
+
+    // Update module progress chips
+    document.querySelectorAll('.module-section').forEach(sec => {
+      const mod = sec.getAttribute('data-module');
+      const cards = sec.querySelectorAll('.test-card');
+      let modPassed = 0;
+      cards.forEach(c => {
+        const id = c.getAttribute('data-id');
+        if (testState[id] && testState[id].status === 'pass') modPassed++;
+      });
+      const chip = document.getElementById('prog-' + mod);
+      if (chip) chip.innerText = `${modPassed}/${cards.length} Passed`;
+    });
+  }
+
+  function setStatusFilter(status, btnElement) {
+    currentStatusFilter = status;
+    document.querySelectorAll('.filter-tabs .tab-btn').forEach(btn => btn.classList.remove('active'));
+    if (btnElement) btnElement.classList.add('active');
+    filterCards();
+  }
+
+  function filterCards() {
+    const query = (document.getElementById('searchInput').value || '').toLowerCase().trim();
+
+    document.querySelectorAll('.test-card').forEach(card => {
+      const text = card.innerText.toLowerCase();
+      const status = card.getAttribute('data-status') || 'untested';
+
+      let matchesStatus = true;
+      if (currentStatusFilter === 'PASS') matchesStatus = (status === 'pass');
+      else if (currentStatusFilter === 'FAIL') matchesStatus = (status === 'fail');
+      else if (currentStatusFilter === 'PROGRESS') matchesStatus = (status === 'progress');
+      else if (currentStatusFilter === 'UNTESTED') matchesStatus = (status === 'untested');
+
+      const matchesQuery = !query || text.includes(query);
+
+      if (matchesStatus && matchesQuery) {
+        card.style.display = 'block';
+      } else {
+        card.style.display = 'none';
+      }
+    });
+  }
+
+  function toggleModule(headerElement) {
+    const section = headerElement.closest('.module-section');
+    section.classList.toggle('collapsed');
+  }
+
+  function toggleAllModules(expand) {
+    document.querySelectorAll('.module-section').forEach(sec => {
+      if (expand) sec.classList.remove('collapsed');
+      else sec.classList.add('collapsed');
+    });
+  }
+
+  function copyCli(btn) {
+    const box = btn.closest('.cli-box');
+    const span = box.querySelector('span');
+    if (span) {
+      navigator.clipboard.writeText(span.innerText);
+      const original = btn.innerText;
+      btn.innerText = 'Copied!';
+      btn.style.background = 'var(--emerald-500)';
+      setTimeout(() => {
+        btn.innerText = original;
+        btn.style.background = '';
+      }, 1500);
+    }
+  }
+
+  function resetAllTests() {
+    if (confirm('Are you sure you want to reset all test statuses and notes in this matrix?')) {
+      testState = {};
+      saveState();
+      document.querySelectorAll('.test-card').forEach(card => {
+        const id = card.getAttribute('data-id');
+        applyCardStatus(id, 'untested');
+        const notes = card.querySelector('.notes-input');
+        if (notes) notes.value = '';
+      });
+      updateStatistics();
+    }
+  }
+
+  function exportReport() {
+    const reportData = {
+      title: "CYBERplus Quality Assurance Test Execution Report",
+      generated_at: new Date().toISOString(),
+      platform_version: "2.5.0",
+      stats: {
+        total: document.getElementById('stat-total').innerText,
+        passed: document.getElementById('stat-passed').innerText,
+        failed: document.getElementById('stat-failed').innerText,
+        in_progress: document.getElementById('stat-progress').innerText,
+        completion_percent: document.getElementById('stat-percent').innerText
+      },
+      tests: testState
+    };
+
+    const blob = new Blob([JSON.stringify(reportData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `cyberplus_qa_report_${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  window.addEventListener('DOMContentLoaded', initTestPlan);
+</script>
+
+</body>
+</html>

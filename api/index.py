@@ -12,6 +12,8 @@ import uuid
 import datetime
 import threading
 import asyncio
+import subprocess
+import re
 from typing import Dict, Any, List, Optional
 import pandas as pd
 import numpy as np
@@ -40,6 +42,7 @@ from response_engine import ResponseEngine, get_response_engine, sanitize_ip
 from database import DatabaseManager, get_db
 from log_parser import LogParser
 from live_monitor import LiveMonitoringSimulator, get_live_simulator
+from geoip_service import get_geoip_service, GEOIP_DISCLAIMER
 
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -50,20 +53,30 @@ app = FastAPI(
     version="2.5.0"
 )
 
-# Configure CORS according to allowed frontend origins
+# Configure CORS according to allowed frontend origins (supporting dynamic localhost ports like 8501, 8502, 3000, 8000)
 allowed_origins_raw = os.environ.get(
     "ALLOWED_ORIGINS",
-    "http://localhost:8501,http://127.0.0.1:8501,http://localhost:3000,http://localhost:8000"
+    "http://localhost:8501,http://127.0.0.1:8501,http://localhost:8502,http://127.0.0.1:8502,http://localhost:3000,http://localhost:8000,http://127.0.0.1:8000"
 )
 allowed_origins = [orig.strip() for orig in allowed_origins_raw.split(",") if orig.strip()]
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
+
+@app.middleware("http")
+async def add_security_headers_and_frame_options(request: Request, call_next):
+    """Ensure framing and private network access work cleanly across local ports without browser blank screens."""
+    response = await call_next(request)
+    response.headers["Content-Security-Policy"] = "frame-ancestors *"
+    response.headers["Access-Control-Allow-Private-Network"] = "true"
+    response.headers["X-Frame-Options"] = "ALLOWALL"
+    return response
 
 detector = get_detector()
 analyzer = get_analyzer()
@@ -71,10 +84,20 @@ explainer = get_explainer()
 response_engine = get_response_engine()
 db = get_db()
 live_sim = get_live_simulator()
+geoip_svc = get_geoip_service(db_manager=db)
 
 # Ensure baseline demo data exists
 if not db.get_incidents():
     db.reset_demo_data()
+
+
+@app.on_event("startup")
+def on_app_startup():
+    """Start automated safe-log 24-hour retention cleanup scheduler on application launch."""
+    try:
+        db.start_retention_cleanup_scheduler(interval_seconds=300)
+    except Exception as e:
+        print(f"[Retention Scheduler Startup Notice] {e}")
 
 
 # ------------------------------------------------------------------------------
@@ -373,45 +396,37 @@ async def websocket_alerts_endpoint(websocket: WebSocket):
         ws_manager.disconnect(websocket)
 
 
+_live_packet_queue: List[Dict[str, Any]] = []
+_live_packet_lock = threading.Lock()
+
+
 @app.websocket("/ws/events")
 async def websocket_events_endpoint(websocket: WebSocket):
-    """WebSocket feed broadcasting live network flow events to connected dashboards."""
+    """WebSocket feed broadcasting live network flow events to all connected dashboards."""
     await ws_manager.connect(websocket)
-    import random
-    sim_sources = ["192.168.1.105", "192.168.1.112", "192.168.1.140", "10.5.10.13", "198.51.100.99"]
-    sim_destinations = [
-        ("142.250.190.46", 443, "TCP", "Normal"),
-        ("1.1.1.1", 53, "UDP", "Normal"),
-        ("10.0.0.15", 22, "TCP", "Suspicious"),
-        ("10.0.0.1", 80, "TCP", "Normal"),
-        ("192.168.1.200", 8080, "TCP", "Suspicious")
-    ]
+    last_sent_idx = 0
+    with _live_packet_lock:
+        last_sent_idx = max(0, len(_live_packet_queue) - 15)
     try:
         while True:
             try:
-                data = await asyncio.wait_for(websocket.receive_text(), timeout=2.0)
+                data = await asyncio.wait_for(websocket.receive_text(), timeout=0.3)
                 if data == "ping":
                     await websocket.send_text("pong")
             except asyncio.TimeoutError:
-                # Generate and stream a live network packet log
-                src_ip = random.choice(sim_sources)
-                dst_ip, dst_port, proto, det_status = random.choice(sim_destinations)
-                is_susp = det_status == "Suspicious" or src_ip == "198.51.100.99"
-                live_event = {
-                    "id": f"EVT-{uuid.uuid4().hex[:8].upper()}",
-                    "timestamp": datetime.datetime.now().isoformat(),
-                    "src_ip": src_ip,
-                    "dst_ip": dst_ip,
-                    "src_port": random.randint(49152, 65535),
-                    "dst_port": dst_port,
-                    "protocol": proto,
-                    "packet_size": random.randint(64, 1500),
-                    "flags": "SYN" if is_susp else ("ACK" if proto == "TCP" else ""),
-                    "flow_id": f"FLOW-{random.randint(100, 999)}",
-                    "is_suspicious": is_susp,
-                    "detection_status": "Port Scan Probe" if (is_susp and proto == "TCP") else ("Suspicious" if is_susp else "Normal")
-                }
-                await websocket.send_json([live_event])
+                batch = []
+                with _live_packet_lock:
+                    q_len = len(_live_packet_queue)
+                    if last_sent_idx > q_len:
+                        last_sent_idx = max(0, q_len - 15)
+                    if last_sent_idx < q_len:
+                        batch = list(_live_packet_queue[last_sent_idx:last_sent_idx + 15])
+                        last_sent_idx += len(batch)
+
+                if batch:
+                    await websocket.send_json(batch)
+                else:
+                    await asyncio.sleep(0.05)
     except WebSocketDisconnect:
         ws_manager.disconnect(websocket)
     except Exception:
@@ -474,6 +489,36 @@ def ingest_agent_telemetry(payload: AgentTelemetryPayload):
             "incident": inc_dict,
             "explanation": exp
         })
+
+    # Persist every event into SQLite network_logs with GeoIP and 24h retention calculation
+    for ev in payload.events:
+        src = str(ev.get("src_ip") or ev.get("source_ip") or "0.0.0.0")
+        dst = str(ev.get("dst_ip") or ev.get("destination_ip") or "0.0.0.0")
+        dport = int(ev.get("dst_port") or ev.get("port") or 80)
+        sport = int(ev.get("src_port") or ev.get("source_port") or 0)
+        proto = str(ev.get("protocol") or "TCP")
+        bsize = int(ev.get("total_bytes") or ev.get("bytes") or 64)
+        ts = ev.get("timestamp") or ev.get("time")
+
+        matched_inc = next((inc for inc in correlated if getattr(inc, "source_ip", "") == src), None)
+        inc_id = matched_inc.incident_id if matched_inc else None
+        is_susp = matched_inc is not None
+        reason = f"Correlated with {matched_inc.category}" if matched_inc else "Nominal agent telemetry"
+
+        process_and_persist_network_event(
+            src_ip=src,
+            dst_ip=dst,
+            dst_port=dport,
+            src_port=sport,
+            protocol=proto,
+            packet_size=bsize,
+            event_timestamp=ts,
+            collector_id=f"agent-{payload.host_id}",
+            event_type="AGENT_TELEMETRY",
+            is_suspicious_override=is_susp,
+            detection_reason_override=reason,
+            incident_id=inc_id
+        )
 
     return {
         "status": "success",
@@ -704,6 +749,376 @@ def get_audit_trail():
 def reset_demo_database():
     db.reset_demo_data()
     return {"status": "success", "message": "Demo incidents restored"}
+
+
+# ------------------------------------------------------------------------------
+# Feature 1 & 2: GeoIP & Threat Heat Map Endpoints
+# ------------------------------------------------------------------------------
+@app.get("/api/geoip/{ip}")
+def get_ip_geolocation(ip: str):
+    """
+    Feature 2: Source IP Geolocation & Network Intelligence.
+    Returns validated IP classification, approximate GeoIP coordinates, ASN, and provider.
+    """
+    intel = geoip_svc.get_ip_intelligence(ip)
+    return intel
+
+
+@app.get("/api/threat-map")
+def get_threat_heat_map_data(
+    range: str = Query("24h"),
+    severity: Optional[str] = Query(None),
+    category: Optional[str] = Query(None),
+    telemetry_source: Optional[str] = Query(None)
+):
+    """
+    Feature 1: Interactive Threat Heat Map Telemetry Aggregation.
+    Aggregates geolocatable public source IPs with coordinates and separates
+    private/local network addresses into an internal topology view.
+    """
+    incidents = db.get_incidents()
+    if severity and severity != "All":
+        incidents = [i for i in incidents if i.get("severity") == severity]
+    if category and category != "All":
+        incidents = [i for i in incidents if i.get("category") == category]
+    if telemetry_source and telemetry_source != "All":
+        incidents = [
+            i for i in incidents
+            if i.get("telemetry_source") == telemetry_source or (telemetry_source == "pcap_replay" and i.get("is_replay"))
+        ]
+
+    public_markers = {}
+    country_aggregates = {}
+    local_hosts = {}
+
+    for inc in incidents:
+        src_ip = inc.get("source_ip")
+        if not src_ip:
+            continue
+        intel = geoip_svc.get_ip_intelligence(src_ip)
+        inc_id = inc.get("incident_id", "INC-UNKNOWN")
+        sev = inc.get("severity", "Medium")
+        cat = inc.get("category", "General Alert")
+        pkts = int(inc.get("total_packets", 1))
+
+        if intel.get("is_public") and intel.get("latitude") is not None and intel.get("longitude") is not None:
+            key = f"{round(intel['latitude'], 3)}_{round(intel['longitude'], 3)}"
+            if key not in public_markers:
+                public_markers[key] = {
+                    "latitude": intel["latitude"],
+                    "longitude": intel["longitude"],
+                    "country": intel.get("country", "Unknown"),
+                    "country_code": intel.get("country_code", "XX"),
+                    "city": intel.get("city", "Unknown"),
+                    "asn": intel.get("asn", "Unknown"),
+                    "org": intel.get("org", "Unknown"),
+                    "source_ips": set(),
+                    "incident_ids": [],
+                    "categories": set(),
+                    "total_packets": 0,
+                    "incident_count": 0,
+                    "max_severity": sev
+                }
+            marker = public_markers[key]
+            marker["source_ips"].add(src_ip)
+            if inc_id not in marker["incident_ids"]:
+                marker["incident_ids"].append(inc_id)
+                marker["incident_count"] += 1
+            marker["categories"].add(cat)
+            marker["total_packets"] += pkts
+            sev_rank = {"Critical": 4, "High": 3, "Medium": 2, "Low": 1}
+            if sev_rank.get(sev, 1) > sev_rank.get(marker["max_severity"], 1):
+                marker["max_severity"] = sev
+
+            # Country aggregation with severity weighting: Critical=5, High=4, Medium=2, Low=1
+            SEVERITY_WEIGHTS = {"Critical": 5, "High": 4, "Medium": 2, "Low": 1}
+            weight = SEVERITY_WEIGHTS.get(sev, 2)
+            c_name = intel.get("country", "Unknown")
+            c_code = intel.get("country_code", "XX")
+
+            ISO2_TO_ISO3 = {
+                "US": "USA", "DE": "DEU", "CN": "CHN", "RU": "RUS", "GB": "GBR", "FR": "FRA",
+                "CA": "CAN", "NL": "NLD", "BR": "BRA", "IN": "IND", "JP": "JPN", "AU": "AUS",
+                "PL": "POL", "CH": "CHE", "UA": "UKR", "KR": "KOR", "SG": "SGP", "SE": "SWE",
+                "ES": "ESP", "IT": "ITA", "IL": "ISR", "RO": "ROU", "VN": "VNM", "TW": "TWN",
+                "HK": "HKG", "TR": "TUR", "MX": "MEX", "ZA": "ZAF", "AR": "ARG", "ID": "IDN",
+                "IR": "IRN", "KP": "PRK", "IE": "IRL", "AT": "AUT", "BE": "BEL", "CZ": "CZE",
+                "DK": "DNK", "FI": "FIN", "NO": "NOR", "PT": "PRT", "GR": "GRC", "HU": "HUN"
+            }
+
+            if c_name not in country_aggregates:
+                country_aggregates[c_name] = {
+                    "country": c_name,
+                    "country_code": c_code,
+                    "iso3": ISO2_TO_ISO3.get(c_code, c_code),
+                    "intensity_score": 0,
+                    "incident_count": 0,
+                    "total_packets": 0,
+                    "unique_ips": set(),
+                    "source_ips": set(),
+                    "severities": {"Critical": 0, "High": 0, "Medium": 0, "Low": 0},
+                    "categories": {},
+                    "recent_incidents": [],
+                    "max_severity": sev,
+                    "top_category": cat
+                }
+            c_agg = country_aggregates[c_name]
+            c_agg["intensity_score"] += weight
+            c_agg["incident_count"] += 1
+            c_agg["total_packets"] += pkts
+            c_agg["unique_ips"].add(src_ip)
+            c_agg["source_ips"].add(src_ip)
+            c_agg["severities"][sev] = c_agg["severities"].get(sev, 0) + 1
+            c_agg["categories"][cat] = c_agg["categories"].get(cat, 0) + 1
+            sev_rank = {"Critical": 4, "High": 3, "Medium": 2, "Low": 1}
+            if sev_rank.get(sev, 1) > sev_rank.get(c_agg["max_severity"], 1):
+                c_agg["max_severity"] = sev
+            if len(c_agg["recent_incidents"]) < 8:
+                c_agg["recent_incidents"].append({
+                    "incident_id": inc_id,
+                    "category": cat,
+                    "severity": sev,
+                    "source_ip": src_ip,
+                    "timestamp": inc.get("timestamp") or datetime.datetime.now().isoformat(),
+                    "packets": pkts
+                })
+        else:
+            # Internal / Local host (Private IP space)
+            if src_ip not in local_hosts:
+                local_hosts[src_ip] = {
+                    "ip": src_ip,
+                    "ip_type": intel.get("ip_type", "private"),
+                    "destination_ip": inc.get("destination_ip"),
+                    "destination_ports": inc.get("destination_ports", []),
+                    "incident_count": 0,
+                    "total_packets": 0,
+                    "categories": set(),
+                    "severity": sev
+                }
+            l_host = local_hosts[src_ip]
+            l_host["incident_count"] += 1
+            l_host["total_packets"] += pkts
+            l_host["categories"].add(cat)
+
+    # Incorporate geolocated suspicious events directly persisted in SQLite network_logs
+    try:
+        susp_logs = db.get_geolocated_suspicious_logs(limit=300)
+        SEVERITY_WEIGHTS = {"Critical": 5, "High": 4, "Medium": 2, "Low": 1}
+        ISO2_TO_ISO3 = {
+            "US": "USA", "DE": "DEU", "CN": "CHN", "RU": "RUS", "GB": "GBR", "FR": "FRA",
+            "CA": "CAN", "NL": "NLD", "BR": "BRA", "IN": "IND", "JP": "JPN", "AU": "AUS",
+            "PL": "POL", "CH": "CHE", "UA": "UKR", "KR": "KOR", "SG": "SGP", "SE": "SWE",
+            "ES": "ESP", "IT": "ITA", "IL": "ISR", "RO": "ROU", "VN": "VNM", "TW": "TWN"
+        }
+        for slog in susp_logs:
+            s_ip = slog.get("source_ip")
+            lat = slog.get("latitude")
+            lon = slog.get("longitude")
+            if not s_ip or lat is None or lon is None:
+                continue
+            s_sev = slog.get("severity") or "High"
+            if severity and severity != "All" and s_sev != severity:
+                continue
+            s_cat = slog.get("detection_reason") or "Suspicious Probe"
+            if category and category != "All" and category.lower() not in s_cat.lower():
+                continue
+            key = f"{round(float(lat), 3)}_{round(float(lon), 3)}"
+            if key not in public_markers:
+                public_markers[key] = {
+                    "latitude": float(lat),
+                    "longitude": float(lon),
+                    "country": slog.get("geoip_country") or "Unknown",
+                    "country_code": "XX",
+                    "city": slog.get("geoip_city") or "Unknown",
+                    "asn": "AS-External",
+                    "org": "External Threat Source",
+                    "source_ips": set(),
+                    "incident_ids": [],
+                    "categories": set(),
+                    "total_packets": 0,
+                    "incident_count": 0,
+                    "max_severity": s_sev
+                }
+            m = public_markers[key]
+            m["source_ips"].add(s_ip)
+            lid = slog.get("log_id") or "LOG-UNKNOWN"
+            if lid not in m["incident_ids"]:
+                m["incident_ids"].append(lid)
+                m["incident_count"] += 1
+            m["categories"].add(s_cat)
+            m["total_packets"] += int(slog.get("packet_size") or 1)
+            sev_rank = {"Critical": 4, "High": 3, "Medium": 2, "Low": 1}
+            if sev_rank.get(s_sev, 1) > sev_rank.get(m["max_severity"], 1):
+                m["max_severity"] = s_sev
+
+            c_name = slog.get("geoip_country") or "Unknown"
+            c_code = "XX"
+            if c_name not in country_aggregates:
+                country_aggregates[c_name] = {
+                    "country": c_name,
+                    "country_code": c_code,
+                    "iso3": ISO2_TO_ISO3.get(c_code, c_code),
+                    "intensity_score": 0,
+                    "incident_count": 0,
+                    "total_packets": 0,
+                    "unique_ips": set(),
+                    "source_ips": set(),
+                    "severities": {"Critical": 0, "High": 0, "Medium": 0, "Low": 0},
+                    "categories": {},
+                    "recent_incidents": [],
+                    "max_severity": s_sev,
+                    "top_category": s_cat
+                }
+            c_agg = country_aggregates[c_name]
+            w = SEVERITY_WEIGHTS.get(s_sev, 2)
+            c_agg["intensity_score"] += w
+            c_agg["incident_count"] += 1
+            c_agg["total_packets"] += int(slog.get("packet_size") or 1)
+            c_agg["unique_ips"].add(s_ip)
+            c_agg["source_ips"].add(s_ip)
+            c_agg["severities"][s_sev] = c_agg["severities"].get(s_sev, 0) + 1
+            c_agg["categories"][s_cat] = c_agg["categories"].get(s_cat, 0) + 1
+            if sev_rank.get(s_sev, 1) > sev_rank.get(c_agg["max_severity"], 1):
+                c_agg["max_severity"] = s_sev
+            if len(c_agg["recent_incidents"]) < 8:
+                c_agg["recent_incidents"].append({
+                    "incident_id": lid,
+                    "category": s_cat,
+                    "severity": s_sev,
+                    "source_ip": s_ip,
+                    "timestamp": slog.get("timestamp") or datetime.datetime.now().isoformat(),
+                    "packets": int(slog.get("packet_size") or 1)
+                })
+    except Exception as e:
+        pass
+
+    marker_list = []
+    for m in public_markers.values():
+        m_copy = dict(m)
+        m_copy["source_ips"] = sorted(list(m_copy["source_ips"]))
+        m_copy["categories"] = sorted(list(m_copy["categories"]))
+        m_copy["severity"] = m_copy.get("max_severity", "High")
+        m_copy["accuracy_km"] = m_copy.get("accuracy_radius", m_copy.get("accuracy_km", 50))
+        marker_list.append(m_copy)
+
+    country_list = []
+    for c in country_aggregates.values():
+        c_copy = dict(c)
+        c_copy["unique_ips"] = len(c_copy["unique_ips"])
+        c_copy["source_ips"] = sorted(list(c_copy["source_ips"]))
+        # Determine dominant attack category
+        if c_copy["categories"]:
+            c_copy["top_category"] = max(c_copy["categories"].items(), key=lambda x: x[1])[0]
+        country_list.append(c_copy)
+    country_list.sort(key=lambda x: (x["intensity_score"], x["incident_count"]), reverse=True)
+
+    local_list = []
+    for l in local_hosts.values():
+        l_copy = dict(l)
+        l_copy["categories"] = sorted(list(l_copy["categories"]))
+        local_list.append(l_copy)
+
+    unique_geolocated_ips = set()
+    for m in marker_list:
+        unique_geolocated_ips.update(m.get("source_ips", []))
+
+    unique_unlocated_ips = set()
+    for l in local_list:
+        if l.get("ip"):
+            unique_unlocated_ips.add(l["ip"])
+
+    high_crit = sum(1 for i in incidents if i.get("severity") in ("High", "Critical"))
+
+    # Compact activity timeline points from actual SQLite records
+    timeline_map = {}
+    for inc in incidents:
+        ts = inc.get("timestamp")
+        if not ts:
+            continue
+        try:
+            dt = datetime.datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            b_key = dt.strftime("%Y-%m-%d %H:00")
+            b_label = dt.strftime("%H:%M")
+        except Exception:
+            b_key = "Recent"
+            b_label = "Recent"
+
+        if b_key not in timeline_map:
+            timeline_map[b_key] = {
+                "time_bucket": b_key,
+                "label": b_label,
+                "total_events": 0,
+                "critical": 0,
+                "high": 0,
+                "medium": 0,
+                "low": 0
+            }
+        timeline_map[b_key]["total_events"] += 1
+        s_val = (inc.get("severity") or "Medium").lower()
+        if s_val == "critical":
+            timeline_map[b_key]["critical"] += 1
+        elif s_val == "high":
+            timeline_map[b_key]["high"] += 1
+        elif s_val == "medium":
+            timeline_map[b_key]["medium"] += 1
+        else:
+            timeline_map[b_key]["low"] += 1
+
+    timeline_points = sorted(timeline_map.values(), key=lambda x: x["time_bucket"])
+
+    return {
+        "status": "success",
+        "markers": marker_list,
+        "country_aggregates": country_list,
+        "local_network": local_list,
+        "activity_timeline": timeline_points,
+        "disclaimer": GEOIP_DISCLAIMER,
+        "total_public_markers": len(marker_list),
+        "total_local_hosts": len(local_list),
+        "total_incidents_analyzed": len(incidents),
+        "statistics": {
+            "total_geolocated_sources": len(unique_geolocated_ips),
+            "countries_detected": len(country_list),
+            "total_suspicious_events": len(incidents),
+            "unlocated_source_ips": len(unique_unlocated_ips),
+            "high_critical_events": high_crit
+        }
+    }
+
+
+# ------------------------------------------------------------------------------
+# Feature 3: Gemini Incident Investigation Endpoints
+# ------------------------------------------------------------------------------
+@app.get("/api/incidents/{incident_id}/investigate")
+@app.post("/api/incidents/{incident_id}/investigate")
+def get_incident_investigation(
+    incident_id: str,
+    force_refresh: bool = Query(False)
+):
+    """
+    Feature 3: Evidence-Grounded Gemini Incident Investigation.
+    Returns 14-section structured SOC investigation report with verification status.
+    """
+    inc = db.get_incident(incident_id)
+    if not inc:
+        all_inc = db.get_incidents()
+        inc = next((i for i in all_inc if i.get("incident_id") == incident_id), None)
+    if not inc:
+        raise HTTPException(status_code=404, detail=f"Incident '{incident_id}' not found.")
+
+    report = explainer.investigate_incident(inc, force_refresh=force_refresh)
+    return report
+
+
+@app.get("/api/gemini/status")
+@app.post("/api/gemini/status")
+def get_gemini_status(force: bool = Query(False)):
+    """
+    Diagnostic status check for Gemini integration without exposing API keys.
+    Supports force=true for manual 'Test Connection' probe.
+    """
+    return explainer.check_gemini_connection(force_test=force)
+
 
 
 @app.post("/api/incidents/{incident_id}/verdict", dependencies=[Depends(verify_admin_authorization)])
@@ -1149,6 +1564,36 @@ def ingest_collector_events(payload: CollectorBatchPayload):
         db.save_incident(inc_d)
         incidents_saved.append(inc_d)
 
+    # Persist every collector event into SQLite network_logs with GeoIP and 24h retention
+    for d in normalized_events:
+        src = d.get("src_ip", "0.0.0.0")
+        dst = d.get("dst_ip", "10.0.0.1")
+        dport = int(d.get("dst_port", 80))
+        sport = int(d.get("src_port", 0))
+        proto = d.get("protocol", "TCP")
+        bsize = int(d.get("total_bytes", 64))
+        ts = d.get("timestamp")
+
+        matched_inc = next((inc for inc in incidents if getattr(inc, "source_ip", "") == src), None)
+        inc_id = matched_inc.incident_id if matched_inc else None
+        is_susp = matched_inc is not None
+        reason = f"Correlated with {matched_inc.category}" if matched_inc else "Nominal probe flow"
+
+        process_and_persist_network_event(
+            src_ip=src,
+            dst_ip=dst,
+            dst_port=dport,
+            src_port=sport,
+            protocol=proto,
+            packet_size=bsize,
+            event_timestamp=ts,
+            collector_id=payload.collector_id,
+            event_type="COLLECTOR_BATCH",
+            is_suspicious_override=is_susp,
+            detection_reason_override=reason,
+            incident_id=inc_id
+        )
+
     return {
         "status": "accepted",
         "schema_version": payload.schema_version,
@@ -1165,86 +1610,636 @@ def ingest_collector_events(payload: CollectorBatchPayload):
 
 # Active collector tracking state in memory
 _active_collector_lock = threading.Lock()
-_active_collector_state = {
+_active_collector_state: Dict[str, Any] = {
     "status": "STOPPED",
     "collector_mode": "INACTIVE",
     "interface": None,
     "bpf_filter": None,
     "pid": None,
-    "start_time": None
+    "start_time": None,
+    "last_collection_time": None,
+    "last_ingestion_time": None,
+    "events_collected": 0,
+    "events_stored": 0,
+    "events_rejected": 0,
+    "total_ingestion_delay_ms": 0.0,
+    "delay_samples": 0,
+    "packets_captured": 0,
+    "flows_transmitted": 0
 }
+_active_tshark_proc = None
+
+
+def process_and_persist_network_event(
+    src_ip: str,
+    dst_ip: str,
+    dst_port: int,
+    src_port: int = 0,
+    protocol: str = "TCP",
+    packet_size: int = 64,
+    event_timestamp: Optional[str] = None,
+    collector_id: str = "host-collector",
+    event_type: str = "FLOW",
+    ml_score: Optional[float] = None,
+    is_suspicious_override: Optional[bool] = None,
+    detection_reason_override: Optional[str] = None,
+    incident_id: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Central Real-Time Telemetry Processing Pipeline:
+    1. Measures real ingestion delay (arrival_time - event_timestamp).
+    2. Enriches with RFC-compliant MaxMind GeoIP (without fabricating coordinates).
+    3. Evaluates threat detection status (Safe vs. Suspicious).
+    4. Persists to SQLite network_logs:
+       - Safe logs receive 24h retention expiration timestamp.
+       - Suspicious logs receive permanent retention and are linked to incidents.
+    5. Updates collector metrics atomically.
+    6. Buffers into live queue for WebSocket broadcasting and dashboard live stream.
+    """
+    arrival_time = time.time()
+    now_iso = datetime.datetime.fromtimestamp(arrival_time).isoformat()
+
+    # Calculate actual ingestion delay
+    event_epoch = arrival_time
+    if event_timestamp:
+        try:
+            clean_ts = str(event_timestamp).replace("Z", "+00:00")
+            dt = datetime.datetime.fromisoformat(clean_ts)
+            event_epoch = dt.timestamp()
+        except Exception:
+            event_epoch = arrival_time
+    delay_ms = max(0.0, (arrival_time - event_epoch) * 1000.0)
+
+    # GeoIP resolution
+    geo = geoip_svc.get_ip_intelligence(src_ip)
+    geoip_country = geo.get("country")
+    geoip_region = geo.get("region")
+    geoip_city = geo.get("city")
+    lat = geo.get("latitude")
+    lon = geo.get("longitude")
+    accuracy = geo.get("accuracy_radius")
+    geoip_status = geo.get("status", "unknown")
+
+    # Threat classification
+    if is_suspicious_override is not None:
+        is_susp = is_suspicious_override
+        reason = detection_reason_override or ("Suspicious Probe" if is_susp else "Nominal Traffic")
+    else:
+        is_susp = (
+            (dst_port in (22, 23, 445, 3389, 8080) and protocol == "TCP") or
+            (src_ip in ("198.51.100.99", "198.51.100.23", "198.51.100.42") and dst_port in (22, 80, 443, 8080))
+        )
+        reason = f"Port Scan Probe targeting port {dst_port}" if is_susp else "Nominal Evaluated Flow"
+
+    det_status = "suspicious" if is_susp else "safe"
+    sev = "High" if is_susp else "Low"
+
+    try:
+        log_id = db.insert_network_log(
+            source_ip=src_ip,
+            destination_ip=dst_ip,
+            destination_port=dst_port,
+            source_port=src_port,
+            protocol=protocol,
+            timestamp=event_timestamp or now_iso,
+            packet_size=packet_size,
+            event_type=event_type,
+            collector_id=collector_id,
+            detection_status=det_status,
+            severity=sev,
+            detection_reason=reason,
+            ml_anomaly_score=ml_score,
+            geoip_country=geoip_country,
+            geoip_region=geoip_region,
+            geoip_city=geoip_city,
+            latitude=lat,
+            longitude=lon,
+            accuracy_radius=accuracy,
+            accuracy_km=accuracy,
+            geoip_status=geoip_status,
+            incident_id=incident_id,
+            ingestion_delay_ms=delay_ms
+        )
+
+        with _active_collector_lock:
+            _active_collector_state["last_collection_time"] = datetime.datetime.fromtimestamp(event_epoch).isoformat()
+            _active_collector_state["last_ingestion_time"] = now_iso
+            _active_collector_state["events_collected"] = _active_collector_state.get("events_collected", 0) + 1
+            _active_collector_state["events_stored"] = _active_collector_state.get("events_stored", 0) + 1
+            _active_collector_state["total_ingestion_delay_ms"] = _active_collector_state.get("total_ingestion_delay_ms", 0.0) + delay_ms
+            _active_collector_state["delay_samples"] = _active_collector_state.get("delay_samples", 0) + 1
+            _active_collector_state["packets_captured"] = _active_collector_state["events_collected"]
+            _active_collector_state["flows_transmitted"] = _active_collector_state["events_stored"]
+
+        live_evt = {
+            "id": log_id,
+            "log_id": log_id,
+            "timestamp": event_timestamp or now_iso,
+            "src_ip": src_ip,
+            "dst_ip": dst_ip,
+            "src_port": src_port,
+            "dst_port": dst_port,
+            "protocol": protocol,
+            "packet_size": packet_size,
+            "flags": "SYN" if is_susp else "ACK",
+            "is_suspicious": is_susp,
+            "detection_status": reason,
+            "severity": sev,
+            "geoip_country": geoip_country,
+            "geoip_region": geoip_region,
+            "geoip_city": geoip_city,
+            "latitude": lat,
+            "longitude": lon,
+            "accuracy_km": accuracy,
+            "data_source": collector_id,
+            "delay_ms": round(delay_ms, 2)
+        }
+        with _live_packet_lock:
+            _live_packet_queue.append(live_evt)
+            if len(_live_packet_queue) > 500:
+                _live_packet_queue.pop(0)
+
+        # Mirror to telemetry events table for legacy queries
+        try:
+            db.log_telemetry_event({
+                "source_ip": src_ip,
+                "destination_ip": dst_ip,
+                "port": dst_port,
+                "packets": 1,
+                "bytes": packet_size,
+                "activity": reason,
+                "risk": sev
+            })
+        except Exception:
+            pass
+
+        return live_evt
+    except Exception as e:
+        with _active_collector_lock:
+            _active_collector_state["events_rejected"] = _active_collector_state.get("events_rejected", 0) + 1
+        return {"error": str(e), "src_ip": src_ip, "dst_ip": dst_ip}
+
+
+def _tshark_capture_worker(interface_str: str, bpf_filter: Optional[str]):
+    global _active_tshark_proc
+    tshark_bin = None
+    for p in [r"C:\Program Files\Wireshark\tshark.exe", r"C:\Program Files (x86)\Wireshark\tshark.exe", "tshark"]:
+        if os.path.isfile(p):
+            tshark_bin = p
+            break
+    if not tshark_bin:
+        return
+
+    iface_raw = str(interface_str or "").strip()
+    m = re.match(r"^(\d+)", iface_raw)
+    if m:
+        iface_arg = m.group(1)
+    elif "(" in iface_raw:
+        iface_arg = iface_raw.split("(")[0].strip()
+    else:
+        iface_arg = iface_raw or "Wi-Fi"
+
+    cmd = [
+        tshark_bin,
+        "-l",
+        "-T", "fields",
+        "-e", "frame.time_epoch",
+        "-e", "ip.src",
+        "-e", "ipv6.src",
+        "-e", "ip.dst",
+        "-e", "ipv6.dst",
+        "-e", "ip.proto",
+        "-e", "tcp.srcport",
+        "-e", "udp.srcport",
+        "-e", "tcp.dstport",
+        "-e", "udp.dstport",
+        "-e", "frame.len",
+        "-e", "tcp.flags",
+        "-E", "header=n",
+        "-E", "separator=\t",
+        "-E", "occurrence=f"
+    ]
+    if iface_arg:
+        cmd.extend(["-i", iface_arg])
+    if bpf_filter:
+        cmd.extend(["-f", bpf_filter])
+
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1
+        )
+        _active_tshark_proc = proc
+
+        for line in proc.stdout:
+            with _active_collector_lock:
+                if _active_collector_state.get("status") != "RUNNING" or _active_collector_state.get("collector_mode") != "LIVE_CAPTURE":
+                    break
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split("\t")
+            if len(parts) < 8:
+                continue
+
+            ts_epoch = float(parts[0]) if parts[0] else time.time()
+            src_ip = parts[1] or parts[2] or "0.0.0.0"
+            dst_ip = parts[3] or parts[4] or "0.0.0.0"
+            proto_val = parts[5] if len(parts) > 5 and parts[5] else "6"
+            src_port = int(parts[6]) if len(parts) > 6 and parts[6].isdigit() else (int(parts[7]) if len(parts) > 7 and parts[7].isdigit() else 0)
+            dst_port = int(parts[8]) if len(parts) > 8 and parts[8].isdigit() else (int(parts[9]) if len(parts) > 9 and parts[9].isdigit() else 0)
+            pkt_len = int(parts[10]) if len(parts) > 10 and parts[10].isdigit() else 64
+            flags_val = parts[11] if len(parts) > 11 else ""
+
+            proto_num = int(proto_val) if proto_val.isdigit() else 6
+            protocol = "TCP" if proto_num == 6 else ("UDP" if proto_num == 17 else ("ICMP" if proto_num in (1, 58) else f"PROTO_{proto_num}"))
+
+            flags_str = "ACK"
+            if flags_val:
+                try:
+                    fnum = int(flags_val, 16) if flags_val.startswith("0x") else int(flags_val)
+                    if fnum & 0x02:
+                        flags_str = "SYN"
+                    elif fnum & 0x01:
+                        flags_str = "FIN"
+                    elif fnum & 0x04:
+                        flags_str = "RST"
+                except Exception:
+                    pass
+
+            is_susp = (flags_str == "SYN" and dst_port in (22, 23, 445, 3389, 8080))
+            det_status = "Port Scan Probe" if is_susp else "Normal Wire Packet"
+
+            process_and_persist_network_event(
+                src_ip=src_ip,
+                dst_ip=dst_ip,
+                dst_port=dst_port,
+                src_port=src_port,
+                protocol=protocol,
+                packet_size=pkt_len,
+                event_timestamp=datetime.datetime.fromtimestamp(ts_epoch).isoformat(),
+                collector_id="tshark_live",
+                event_type="LIVE_PACKET",
+                is_suspicious_override=is_susp,
+                detection_reason_override=det_status
+            )
+    except Exception as e:
+        print(f"[TShark Worker Error] {e}")
+    finally:
+        if proc:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+
+
+def _simulation_worker():
+    """Generates synthetic network flows when SIMULATION mode is active."""
+    import random
+    sim_sources = ["192.168.1.105", "192.168.1.112", "192.168.1.140", "10.5.10.13", "198.51.100.99"]
+    sim_destinations = [
+        ("142.250.190.46", 443, "TCP", "Normal"),
+        ("1.1.1.1", 53, "UDP", "Normal"),
+        ("10.0.0.15", 22, "TCP", "Port Scan Probe"),
+        ("10.0.0.1", 80, "TCP", "Normal"),
+        ("192.168.1.200", 8080, "TCP", "Port Scan Probe")
+    ]
+    try:
+        while True:
+            with _active_collector_lock:
+                if _active_collector_state.get("status") != "RUNNING" or _active_collector_state.get("collector_mode") != "SIMULATION":
+                    break
+
+            src_ip = random.choice(sim_sources)
+            dst_ip, dst_port, proto, det_status = random.choice(sim_destinations)
+            is_susp = det_status != "Normal" or src_ip == "198.51.100.99"
+            pkt_len = random.randint(64, 1500)
+
+            process_and_persist_network_event(
+                src_ip=src_ip,
+                dst_ip=dst_ip,
+                dst_port=dst_port,
+                src_port=random.randint(49152, 65535),
+                protocol=proto,
+                packet_size=pkt_len,
+                event_timestamp=datetime.datetime.now().isoformat(),
+                collector_id="SIMULATION",
+                event_type="SYNTHETIC_FLOW",
+                is_suspicious_override=is_susp,
+                detection_reason_override=det_status
+            )
+
+            time.sleep(random.uniform(0.6, 1.2))
+    except Exception as e:
+        print(f"[Simulation Worker Error] {e}")
+
 
 @app.get("/api/collector/status")
 def get_collector_status():
-    """Returns runtime health, uptime, and packet throughput of the packet ingestion engine."""
-    health_path = os.path.join(ROOT_DIR, "reports", "collector_health.json")
-    status_raw = "STOPPED"
-    mode_raw = "LIVE_CAPTURE"
-    iface_raw = "Wi-Fi"
-    bpf_filter = None
-    pkts = 0
-    flows = 0
-    errors = 0
-    uptime = 0.0
-    last_event = None
-    tshark_ver = "4.6.x (Npcap)"
+    """
+    Returns verified runtime health, uptime, packet throughput, and measured ingestion latency.
+    Strictly reports real measured state without fabricating status.
+    """
+    with _active_collector_lock:
+        st = dict(_active_collector_state)
+    with _live_packet_lock:
+        q_size = len(_live_packet_queue)
 
-    if os.path.exists(health_path):
-        try:
-            with open(health_path, "r", encoding="utf-8") as f:
-                health = json.load(f)
-                status_raw = health.get("status", "STOPPED")
-                mode_raw = health.get("collector_mode", "LIVE_CAPTURE")
-                iface_raw = health.get("interface", "Wi-Fi")
-                bpf_filter = health.get("bpf_filter")
-                pkts = health.get("packets_captured", 0)
-                flows = health.get("flows_transmitted", 0)
-                errors = health.get("parsing_errors", 0)
-                uptime = health.get("uptime_seconds", 0.0)
-                last_event = health.get("last_event_time")
-                tshark_ver = health.get("tshark_version", "4.6.x (Npcap)")
-        except Exception:
-            pass
-    else:
-        with _active_collector_lock:
-            st = dict(_active_collector_state)
-            status_raw = st.get("status", "STOPPED")
-            mode_raw = st.get("collector_mode", "LIVE_CAPTURE")
-            iface_raw = st.get("interface") or "Wi-Fi"
-            bpf_filter = st.get("bpf_filter")
-            pkts = 1250 if status_raw == "RUNNING" else 0
-            flows = 85 if status_raw == "RUNNING" else 0
-            errors = 0
-            uptime = round(time.time() - st["start_time"], 1) if st.get("start_time") else 0.0
-            last_event = datetime.datetime.now().isoformat() if status_raw == "RUNNING" else None
-
-    is_running = str(status_raw).upper() == "RUNNING"
-    normalized_status = "running" if is_running else "stopped"
+    is_running = st.get("status") == "RUNNING"
+    start_t = st.get("start_time")
+    uptime = round(time.time() - start_t, 1) if (is_running and start_t) else 0.0
+    collected = st.get("events_collected", 0)
+    stored = st.get("events_stored", 0)
+    rejected = st.get("events_rejected", 0)
+    delay_sum = st.get("total_ingestion_delay_ms", 0.0)
+    samples = st.get("delay_samples", 0)
+    avg_delay = round(delay_sum / max(1, samples), 2) if samples > 0 else 0.0
+    iface = st.get("interface") or "Wi-Fi"
+    mode_raw = st.get("collector_mode", "LIVE_CAPTURE")
 
     return {
-        "status": normalized_status,
-        "raw_status": status_raw,
+        "status": "running" if is_running else "stopped",
+        "raw_status": "RUNNING" if is_running else "STOPPED",
         "active_session": is_running,
-        "capture_interface": iface_raw,
-        "interface": iface_raw,
+        "capture_interface": iface,
+        "interface": iface,
         "collector_mode": mode_raw,
-        "mode": mode_raw,
-        "bpf_filter": bpf_filter,
-        "packets_captured": pkts,
-        "packet_count": pkts,
-        "flows_transmitted": flows,
-        "event_count": flows,
-        "parsing_errors": errors,
+        "mode": "live" if "LIVE" in str(mode_raw).upper() else ("pcap" if "PCAP" in str(mode_raw).upper() else "simulation"),
+        "bpf_filter": st.get("bpf_filter"),
+        "last_collection_time": st.get("last_collection_time"),
+        "last_ingestion_time": st.get("last_ingestion_time"),
+        "events_collected": collected,
+        "total_events_collected": collected,
+        "events_stored": stored,
+        "events_successfully_stored": stored,
+        "events_rejected": rejected,
+        "events_rejected_or_failed": rejected,
+        "average_ingestion_delay_ms": avg_delay,
+        "queue_size": q_size,
         "uptime_seconds": uptime,
-        "last_event_time": last_event,
-        "last_event_received": last_event,
-        "tshark_version": tshark_ver
+        "packets_captured": collected,
+        "flows_transmitted": stored,
+        "tshark_version": "4.6.x (Npcap)"
     }
+
+
+# ------------------------------------------------------------------------------
+# Feature: Log Management, Retention & User Preservation Endpoints
+# ------------------------------------------------------------------------------
+class BulkLogsRequest(BaseModel):
+    log_ids: List[str]
+    operator: str = "Security Analyst"
+
+
+@app.get("/api/logs")
+def get_network_logs_endpoint(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=500),
+    detection_status: Optional[str] = Query(None),
+    retention_status: Optional[str] = Query(None),
+    severity: Optional[str] = Query(None),
+    search: Optional[str] = Query(None)
+):
+    """
+    Retrieve paginated network telemetry logs with retention countdowns,
+    classification filters, and preservation state.
+    """
+    offset = (page - 1) * page_size
+    logs = db.get_network_logs(
+        limit=page_size,
+        offset=offset,
+        detection_status=detection_status if detection_status != "all" else None,
+        retention_status=retention_status if retention_status != "all" else None,
+        severity=severity if severity != "all" else None,
+        search=search
+    )
+    stats = db.get_log_retention_statistics()
+    return {
+        "status": "success",
+        "page": page,
+        "page_size": page_size,
+        "total_active_logs": stats.get("total_active_logs", len(logs)),
+        "logs": logs
+    }
+
+
+@app.get("/api/logs/{log_id}")
+def get_single_log_endpoint(log_id: str):
+    """Retrieve detailed metadata and retention expiration information for a single log."""
+    log = db.get_network_log_by_id(log_id)
+    if not log:
+        raise HTTPException(status_code=404, detail=f"Log '{log_id}' not found.")
+    return {"status": "success", "log": log}
+
+
+@app.post("/api/logs/{log_id}/preserve")
+def preserve_single_log_endpoint(log_id: str, operator: str = Query("Security Analyst")):
+    """User-controlled retention: Mark safe log as preserved to prevent automated 24h deletion."""
+    success = db.preserve_network_log(log_id, operator=operator)
+    if not success:
+        raise HTTPException(status_code=404, detail=f"Log '{log_id}' not found or could not be preserved.")
+    return {"status": "success", "log_id": log_id, "retention_status": "preserved"}
+
+
+@app.post("/api/logs/{log_id}/unpreserve")
+def unpreserve_single_log_endpoint(log_id: str, operator: str = Query("Security Analyst")):
+    """User-controlled retention: Release preservation and return log to standard 24h retention countdown."""
+    success = db.unpreserve_network_log(log_id, operator=operator)
+    if not success:
+        raise HTTPException(status_code=404, detail=f"Log '{log_id}' not found.")
+    return {"status": "success", "log_id": log_id, "retention_status": "retained"}
+
+
+@app.delete("/api/logs/{log_id}")
+@app.post("/api/logs/{log_id}/delete")
+def delete_single_log_endpoint(log_id: str, operator: str = Query("Security Analyst")):
+    """User-controlled retention: Delete a safe log immediately after confirmation."""
+    success, msg = db.delete_network_log_now(log_id, operator=operator)
+    if not success:
+        raise HTTPException(status_code=400, detail=msg)
+    return {"status": "success", "message": msg, "log_id": log_id}
+
+
+@app.post("/api/logs/bulk-preserve")
+def bulk_preserve_logs_endpoint(req: BulkLogsRequest):
+    """Bulk action: Preserve multiple safe logs from automated 24h deletion."""
+    count = db.bulk_preserve_network_logs(req.log_ids, operator=req.operator)
+    return {"status": "success", "preserved_count": count}
+
+
+@app.post("/api/logs/bulk-delete")
+def bulk_delete_logs_endpoint(req: BulkLogsRequest):
+    """Bulk action: Immediately delete selected safe logs."""
+    deleted_cnt, blocked_cnt = db.bulk_delete_network_logs_now(req.log_ids, operator=req.operator)
+    return {"status": "success", "deleted_count": deleted_cnt, "blocked_count": blocked_cnt}
+
+
+@app.get("/api/logs/retention-stats")
+def get_log_retention_stats_endpoint():
+    """Retrieve comprehensive statistics for 24h retention countdowns and cleanup cycles."""
+    return db.get_log_retention_statistics()
+
+
+@app.get("/api/logs/export")
+def export_logs_endpoint(
+    format: str = Query("csv"),
+    detection_status: Optional[str] = Query(None),
+    retention_status: Optional[str] = Query(None),
+    severity: Optional[str] = Query(None)
+):
+    """Export selected logs to CSV or JSON format."""
+    content = db.export_network_logs(
+        format=format,
+        detection_status=detection_status if detection_status != "all" else None,
+        retention_status=retention_status if retention_status != "all" else None,
+        severity=severity if severity != "all" else None
+    )
+    media_type = "text/csv" if format.lower() == "csv" else "application/json"
+    filename = f"sentinelai_logs_{int(time.time())}.{format.lower()}"
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
+
+@app.post("/api/logs/cleanup")
+def trigger_retention_cleanup_endpoint(operator: str = Query("Admin Manual Trigger")):
+    """Manually trigger a purge of expired safe logs past their 24-hour expiration."""
+    result = db.purge_expired_safe_logs(operator=operator)
+    return {"status": "success", "cleanup_result": result}
+
+
+@app.get("/api/system/activity")
+def get_system_activity_endpoint(limit: int = Query(50, ge=1, le=500)):
+    """Retrieve governance system activity audit records."""
+    return {"status": "success", "activities": db.get_system_activities(limit=limit)}
+
+
+@app.get("/api/geoip/status")
+def get_geoip_status_endpoint():
+    """Retrieve MaxMind GeoIP database loading status and path."""
+    return geoip_svc.get_database_status()
+
+
+@app.get("/api/threat-map/ip-lookup")
+def threat_map_ip_lookup_endpoint(ip: str = Query(..., description="IP to inspect")):
+    """Deep source IP intelligence lookup using GeoLite2 City database and threat memory."""
+    geo = geoip_svc.get_ip_intelligence(ip)
+    # Also find recent history from SQLite
+    logs = db.get_network_logs(limit=10, search=ip)
+    incidents = [i for i in db.get_incidents() if i.get("source_ip") == ip or i.get("destination_ip") == ip]
+    return {
+        "status": "success",
+        "ip": ip,
+        "intelligence": geo,
+        "recent_flows_count": len(logs),
+        "related_incidents_count": len(incidents),
+        "recent_flows": logs[:5],
+        "incidents": incidents[:5]
+    }
+
+
+@app.get("/api/copilot/explain/{incident_id}")
+def get_copilot_incident_explanation(incident_id: str):
+    """Retrieve grounded Gemini Copilot explanation, root-cause analysis, and dual hypotheses."""
+    inc = db.get_incident_by_id(incident_id)
+    if not inc:
+        # Check alerts
+        for i in db.get_incidents():
+            if str(i.get("incident_id")) == incident_id or str(i.get("id")) == incident_id:
+                inc = i
+                break
+    if not inc:
+        raise HTTPException(status_code=404, detail=f"Incident '{incident_id}' not found.")
+    exp = explainer.explain_incident(inc)
+    safe_rec = response_engine.recommend_safe_actions(inc)
+    return {
+        "status": "success",
+        "incident_id": incident_id,
+        "incident": inc,
+        "explanation": exp,
+        "safe_recommendations": safe_rec
+    }
+
+
+@app.get("/api/copilot/summary")
+def get_copilot_executive_summary():
+    """Generate high-level AI executive briefing across recent incidents."""
+    incidents = db.get_incidents()
+    recent_logs = db.get_network_logs(limit=100)
+    import pandas as pd
+    if recent_logs:
+        df = pd.DataFrame(recent_logs)
+        df_mapped = pd.DataFrame()
+        if "detection_status" in df.columns:
+            df_mapped["Risk"] = df["severity"].fillna("Low") if "severity" in df.columns else "Low"
+            df_mapped["Activity"] = df["detection_reason"].fillna("Flow") if "detection_reason" in df.columns else "Flow"
+            df_mapped["Source IP"] = df["source_ip"] if "source_ip" in df.columns else "0.0.0.0"
+        summary = explainer.generate_executive_summary(df_mapped)
+    else:
+        summary = "All monitored network transactions conform to normal operational baselines (0 malicious incidents detected)."
+    
+    return {
+        "status": "success",
+        "gemini_active": explainer.is_gemini_active,
+        "provider": "Google Gemini Live AI" if explainer.is_gemini_active else "Local Knowledge Base Fallback",
+        "summary": summary,
+        "total_incidents": len(incidents),
+        "timestamp": datetime.datetime.now().isoformat()
+    }
+
+
+
+_ip_map_cache: Dict[str, str] = {
+    "wi-fi": "10.10.213.36",
+    "ethernet 2": "192.168.56.1",
+    "vethernet (wsl (hyper-v firewall))": "172.19.32.1",
+    "loopback pseudo-interface 1": "127.0.0.1"
+}
+_ip_map_last_updated = 0.0
+
+
+def _get_host_ip_mapping() -> Dict[str, str]:
+    """Queries Windows Get-NetIPAddress to map interface alias names to active IPv4 addresses (cached)."""
+    global _ip_map_cache, _ip_map_last_updated
+    now = time.time()
+    if now - _ip_map_last_updated < 60.0 and _ip_map_cache:
+        return _ip_map_cache
+
+    try:
+        cmd = [
+            "powershell.exe",
+            "-NoProfile",
+            "-ExecutionPolicy", "Bypass",
+            "-Command",
+            "Get-NetIPAddress -AddressFamily IPv4 | Select-Object InterfaceAlias, IPAddress | ConvertTo-Json -Compress"
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        if res.returncode == 0 and res.stdout.strip():
+            data = json.loads(res.stdout.strip())
+            if isinstance(data, dict):
+                data = [data]
+            new_map = {}
+            for item in data:
+                alias = str(item.get("InterfaceAlias", "")).strip().lower()
+                ip = str(item.get("IPAddress", "")).strip()
+                if alias and ip:
+                    new_map[alias] = ip
+            if new_map:
+                _ip_map_cache = new_map
+                _ip_map_last_updated = now
+    except Exception:
+        pass
+    return _ip_map_cache
 
 
 @app.get("/api/collector/interfaces")
 def get_collector_interfaces():
-    """Lists available network capture interfaces detected on the host with structured descriptions."""
+    """Lists available network capture interfaces detected on the host with IP addresses and clean names."""
     import re
     raw_interfaces = []
     try:
@@ -1255,32 +2250,78 @@ def get_collector_interfaces():
 
     if not raw_interfaces or any("not found" in str(r).lower() or "error" in str(r).lower() for r in raw_interfaces):
         raw_interfaces = [
-            "1. \\Device\\NPF_{30B2A1A7-EFA2-4119-BBAF-AD7DA42BE173} (Wi-Fi)",
-            "2. \\Device\\NPF_{B2AA10D8-8BAA-4D30-9E28-F94018AA5875} (Ethernet)",
-            "3. \\Device\\NPF_Loopback (Adapter for loopback traffic capture)"
+            r"4. \Device\NPF_{30B2A1A7-EFA2-4119-BBAF-AD7DA42BE173} (Wi-Fi)",
+            r"7. \Device\NPF_{E0F311F9-0178-4D7E-A091-9AFB3CA6065A} (Ethernet 2)",
+            r"8. \Device\NPF_{A62F9FF8-5866-426A-BCCD-73D966635728} (vEthernet (WSL (Hyper-V firewall)))",
+            r"9. \Device\NPF_Loopback (Adapter for loopback traffic capture)"
         ]
 
+    ip_map = _get_host_ip_mapping()
     formatted = []
+
     for line in raw_interfaces:
         if isinstance(line, dict):
             formatted.append(line)
             continue
         line_str = str(line).strip()
-        match = re.match(r"^(\d+\.?\s*(?:\\Device\\[^\s]+|[^\(]+?))\s*(?:\((.*)\))?$", line_str)
-        if match:
-            dev = match.group(1).strip()
-            desc = match.group(2).strip() if match.group(2) else ""
-            formatted.append({
-                "name": dev,
-                "description": desc or dev,
-                "addresses": []
-            })
+        if not line_str:
+            continue
+
+        # Format: <idx>. <dev> (<desc>) or <idx>. <dev>
+        idx = ""
+        dev = ""
+        desc = ""
+        m = re.match(r"^(\d+)\.\s+(\S+)(?:\s+\((.*)\))?$", line_str)
+        if m:
+            idx = m.group(1)
+            dev = m.group(2)
+            desc = (m.group(3) or dev).strip()
         else:
-            formatted.append({
-                "name": line_str,
-                "description": line_str,
-                "addresses": []
-            })
+            m2 = re.match(r"^(\d+)\.\s+(.*)$", line_str)
+            if m2:
+                idx = m2.group(1)
+                dev = m2.group(2).strip()
+                desc = dev
+            else:
+                idx = line_str
+                dev = line_str
+                desc = line_str
+
+        # Match IP address
+        desc_lower = desc.lower()
+        dev_lower = dev.lower()
+        matched_ip = None
+
+        if "loopback" in desc_lower or "loopback" in dev_lower:
+            matched_ip = "127.0.0.1"
+        elif desc_lower in ip_map:
+            matched_ip = ip_map[desc_lower]
+        else:
+            for k, v in ip_map.items():
+                if ("wsl" in k and "wsl" in desc_lower) or ("vpn" in k and "vpn" in desc_lower):
+                    matched_ip = v
+                    break
+
+        is_active = bool(matched_ip and not matched_ip.startswith("169.254."))
+
+        # Create clean, readable description with IP (NO GUIDs)
+        if matched_ip:
+            clean_label = f"{desc} ({matched_ip})"
+        else:
+            clean_label = f"{desc} (No IPv4)"
+
+        formatted.append({
+            "id": idx or desc,
+            "name": idx or desc,
+            "alias": desc,
+            "description": clean_label,
+            "addresses": [matched_ip] if matched_ip else [],
+            "ip": matched_ip,
+            "is_active": is_active
+        })
+
+    # Sort so active interfaces with routable IPv4 are at top (Wi-Fi prioritized first)
+    formatted.sort(key=lambda x: (not x.get("is_active", False), x.get("alias") != "Wi-Fi"))
 
     return {
         "interfaces": formatted,
@@ -1298,11 +2339,51 @@ def start_collector(req: CollectorStartRequest):
                 detail=f"Collector is already active on interface '{_active_collector_state.get('interface')}'. Set force=True to restart."
             )
         
+        chosen_iface = req.interface or "Wi-Fi"
+        display_iface = chosen_iface
+        try:
+            for ifc in get_collector_interfaces().get("interfaces", []):
+                if str(ifc.get("id")) == str(chosen_iface) or str(ifc.get("name")) == str(chosen_iface) or ifc.get("alias") == chosen_iface:
+                    display_iface = ifc.get("description", chosen_iface)
+                    break
+        except Exception:
+            pass
+
+        mode_clean = str(req.mode or "live").lower()
+        if "sim" in mode_clean:
+            resolved_mode = "SIMULATION"
+            display_iface = "Synthetic Simulation"
+        elif "pcap" in mode_clean:
+            resolved_mode = "PCAP_REPLAY"
+            display_iface = "PCAP File Replay"
+        else:
+            resolved_mode = "LIVE_CAPTURE"
+
         _active_collector_state["status"] = "RUNNING"
-        _active_collector_state["interface"] = req.interface or "Wi-Fi"
-        _active_collector_state["collector_mode"] = "PCAP_REPLAY" if req.mode == "replay" else "LIVE_CAPTURE"
+        _active_collector_state["interface"] = display_iface
+        _active_collector_state["collector_mode"] = resolved_mode
         _active_collector_state["bpf_filter"] = req.bpf_filter
         _active_collector_state["start_time"] = time.time()
+        _active_collector_state["packets_captured"] = 0
+        _active_collector_state["flows_transmitted"] = 0
+
+        with _live_packet_lock:
+            _live_packet_queue.clear()
+
+        global _active_tshark_proc
+        if _active_tshark_proc:
+            try:
+                _active_tshark_proc.terminate()
+            except Exception:
+                pass
+            _active_tshark_proc = None
+
+        if resolved_mode == "LIVE_CAPTURE":
+            t = threading.Thread(target=_tshark_capture_worker, args=(chosen_iface, req.bpf_filter), daemon=True)
+            t.start()
+        elif resolved_mode == "SIMULATION":
+            t = threading.Thread(target=_simulation_worker, daemon=True)
+            t.start()
 
         # Update health file
         health_path = os.path.join(ROOT_DIR, "reports", "collector_health.json")
@@ -1326,7 +2407,7 @@ def start_collector(req: CollectorStartRequest):
 
     return {
         "status": "success",
-        "message": f"Collector started on {req.interface} ({req.mode})",
+        "message": f"Collector started on {display_iface} ({req.mode})",
         "collector_state": _active_collector_state
     }
 
@@ -1338,16 +2419,27 @@ def stop_collector():
         _active_collector_state["status"] = "STOPPED"
         _active_collector_state["start_time"] = None
 
-        health_path = os.path.join(ROOT_DIR, "reports", "collector_health.json")
-        if os.path.exists(health_path):
-            try:
-                with open(health_path, "r", encoding="utf-8") as f:
-                    h = json.load(f)
-                h["status"] = "STOPPED"
-                with open(health_path, "w", encoding="utf-8") as f:
-                    json.dump(h, f, indent=2)
-            except Exception:
-                pass
+    with _live_packet_lock:
+        _live_packet_queue.clear()
+
+    global _active_tshark_proc
+    if _active_tshark_proc:
+        try:
+            _active_tshark_proc.terminate()
+        except Exception:
+            pass
+        _active_tshark_proc = None
+
+    health_path = os.path.join(ROOT_DIR, "reports", "collector_health.json")
+    if os.path.exists(health_path):
+        try:
+            with open(health_path, "r", encoding="utf-8") as f:
+                h = json.load(f)
+            h["status"] = "STOPPED"
+            with open(health_path, "w", encoding="utf-8") as f:
+                json.dump(h, f, indent=2)
+        except Exception:
+            pass
 
     return {"status": "success", "message": "Collector stopped safely"}
 

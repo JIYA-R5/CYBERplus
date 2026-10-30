@@ -11,9 +11,12 @@ import uuid
 import datetime
 import os
 import re
+import threading
 from typing import Dict, Any, List, Optional, Union
 import pandas as pd
 
+
+SAFE_LOG_RETENTION_HOURS = int(os.environ.get("SAFE_LOG_RETENTION_HOURS", "24"))
 
 IDENTITY_DISCLAIMER = (
     "Network IP Indicator Notice: IP addresses identify routing endpoints and may be "
@@ -52,9 +55,10 @@ class DatabaseManager:
     """
 
     def __init__(self, db_path: Optional[str] = None):
+        target_env = os.environ.get("DATABASE_PATH") or os.environ.get("SENTINEL_DB_PATH")
         if db_path is None:
-            if os.environ.get("SENTINEL_DB_PATH"):
-                self.db_path = os.environ.get("SENTINEL_DB_PATH")
+            if target_env:
+                self.db_path = target_env
                 # If target db doesn't exist yet but root sentinel.db exists, seed it
                 base_dir = os.path.dirname(os.path.abspath(__file__))
                 orig_db = os.path.join(base_dir, "sentinel.db")
@@ -83,6 +87,8 @@ class DatabaseManager:
                 self.db_path = os.path.join(base_dir, "sentinel.db")
         else:
             self.db_path = db_path
+
+        self.retention_hours = int(os.environ.get("SAFE_LOG_RETENTION_HOURS", "24"))
 
         # Ensure parent directory exists
         parent_dir = os.path.dirname(os.path.abspath(self.db_path))
@@ -173,6 +179,7 @@ class DatabaseManager:
         try:
             conn.execute("PRAGMA journal_mode=WAL;")
             conn.execute("PRAGMA busy_timeout=5000;")
+            conn.execute("PRAGMA foreign_keys=ON;")
         except Exception:
             pass
         return conn
@@ -223,6 +230,20 @@ class DatabaseManager:
                 ("raw_evidence", "TEXT"),
                 ("is_replay", "INTEGER DEFAULT 0"),
                 ("telemetry_source", "TEXT DEFAULT 'live'"),
+                ("associated_log_ids", "TEXT DEFAULT '[]'"),
+                ("gemini_analysis", "TEXT"),
+                ("first_detected", "TEXT"),
+                ("last_detected", "TEXT"),
+                ("recommended_response", "TEXT"),
+                ("user_review_status", "TEXT DEFAULT 'Unreviewed'"),
+                ("geoip_country", "TEXT"),
+                ("geoip_region", "TEXT"),
+                ("geoip_city", "TEXT"),
+                ("latitude", "REAL"),
+                ("longitude", "REAL"),
+                ("accuracy_km", "INTEGER"),
+                ("accuracy_radius", "INTEGER"),
+                ("geoip_status", "TEXT DEFAULT 'pending'"),
             ]
 
             for col_name, col_type in new_columns:
@@ -345,6 +366,121 @@ class DatabaseManager:
             )
             """)
 
+            # 9. GeoIP Cache table
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS geoip_cache (
+                ip_address TEXT PRIMARY KEY,
+                is_public INTEGER NOT NULL,
+                ip_type TEXT,
+                country TEXT,
+                country_code TEXT,
+                region TEXT,
+                city TEXT,
+                latitude REAL,
+                longitude REAL,
+                asn TEXT,
+                org TEXT,
+                provider TEXT,
+                accuracy_radius INTEGER,
+                status TEXT NOT NULL,
+                lookup_time TEXT NOT NULL,
+                expires_at TEXT,
+                raw_response TEXT
+            )
+            """)
+
+            # 10. Incident Investigations Cache table
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS incident_investigations (
+                investigation_id TEXT PRIMARY KEY,
+                incident_id TEXT NOT NULL,
+                evidence_hash TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                model_name TEXT,
+                report_json TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """)
+
+            # 11. Network Logs Table (Continuous Real-Time Telemetry & 24h Safe-Log Retention)
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS network_logs (
+                log_id TEXT PRIMARY KEY,
+                source_ip TEXT NOT NULL,
+                destination_ip TEXT,
+                source_port INTEGER,
+                destination_port INTEGER,
+                protocol TEXT,
+                timestamp TEXT NOT NULL,
+                packet_size INTEGER DEFAULT 0,
+                event_type TEXT DEFAULT 'network_flow',
+                collector_id TEXT DEFAULT 'host_agent',
+                detection_status TEXT DEFAULT 'unprocessed',
+                severity TEXT DEFAULT 'Low',
+                detection_reason TEXT,
+                ml_anomaly_score REAL DEFAULT 0.0,
+                geoip_country TEXT,
+                geoip_region TEXT,
+                geoip_city TEXT,
+                latitude REAL,
+                longitude REAL,
+                accuracy_radius INTEGER,
+                accuracy_km INTEGER,
+                geoip_status TEXT DEFAULT 'pending',
+                created_at TEXT NOT NULL,
+                retention_status TEXT DEFAULT 'auto_delete',
+                expires_at TEXT NOT NULL,
+                is_preserved INTEGER DEFAULT 0,
+                preserved_at TEXT,
+                export_status TEXT DEFAULT 'not_exported',
+                incident_id TEXT,
+                ingestion_delay_ms REAL DEFAULT 0.0,
+                FOREIGN KEY (incident_id) REFERENCES incidents(incident_id) ON DELETE SET NULL
+            )
+            """)
+
+            # 12. System Activity & Governance Table
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS system_activity (
+                activity_id TEXT PRIMARY KEY,
+                timestamp TEXT NOT NULL,
+                activity_type TEXT NOT NULL,
+                operator TEXT DEFAULT 'System',
+                details TEXT,
+                result TEXT DEFAULT 'SUCCESS'
+            )
+            """)
+
+            # Schema Migration for network_logs
+            cursor.execute("PRAGMA table_info(network_logs)")
+            existing_netlog_cols = {row["name"] for row in cursor.fetchall()}
+            netlog_mig_cols = [
+                ("packet_size", "INTEGER DEFAULT 0"),
+                ("event_type", "TEXT DEFAULT 'network_flow'"),
+                ("collector_id", "TEXT DEFAULT 'host_agent'"),
+                ("detection_status", "TEXT DEFAULT 'unprocessed'"),
+                ("detection_reason", "TEXT"),
+                ("ml_anomaly_score", "REAL DEFAULT 0.0"),
+                ("geoip_country", "TEXT"),
+                ("geoip_region", "TEXT"),
+                ("geoip_city", "TEXT"),
+                ("latitude", "REAL"),
+                ("longitude", "REAL"),
+                ("accuracy_radius", "INTEGER"),
+                ("accuracy_km", "INTEGER"),
+                ("geoip_status", "TEXT DEFAULT 'pending'"),
+                ("retention_status", "TEXT DEFAULT 'auto_delete'"),
+                ("expires_at", "TEXT"),
+                ("is_preserved", "INTEGER DEFAULT 0"),
+                ("preserved_at", "TEXT"),
+                ("export_status", "TEXT DEFAULT 'not_exported'"),
+                ("incident_id", "TEXT"),
+                ("ingestion_delay_ms", "REAL DEFAULT 0.0")
+            ]
+            for col_name, col_type in netlog_mig_cols:
+                if col_name not in existing_netlog_cols:
+                    cursor.execute(f"ALTER TABLE network_logs ADD COLUMN {col_name} {col_type}")
+
             # Indexes for performant filtering
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_incident_status ON incidents(status)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_incident_severity ON incidents(severity)")
@@ -354,6 +490,17 @@ class DatabaseManager:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_blocks_status ON active_blocks(status)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_flows_capture ON pcap_flows(capture_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_flows_src ON pcap_flows(src_ip)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_geoip_status ON geoip_cache(status)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_investigation_inc_hash ON incident_investigations(incident_id, evidence_hash)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_netlogs_timestamp ON network_logs(timestamp)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_netlogs_created_at ON network_logs(created_at)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_netlogs_source_ip ON network_logs(source_ip)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_netlogs_severity ON network_logs(severity)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_netlogs_detection_status ON network_logs(detection_status)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_netlogs_retention ON network_logs(retention_status, is_preserved, expires_at)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_netlogs_incident_id ON network_logs(incident_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_sysact_timestamp ON system_activity(timestamp)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_sysact_type ON system_activity(activity_type)")
             conn.commit()
 
     def get_ip_recurrence_count(self, source_ip: str) -> int:
@@ -551,6 +698,10 @@ class DatabaseManager:
                     pass
                 return item
             return None
+
+    def get_incident(self, incident_id: str) -> Optional[Dict[str, Any]]:
+        """Alias for get_incident_by_id."""
+        return self.get_incident_by_id(incident_id)
 
     def update_incident_status(
         self,
@@ -1253,6 +1404,1228 @@ class DatabaseManager:
             details="Demo security incidents initialized with persistent threat memory schema.",
             result="SUCCESS"
         )
+
+    # --------------------------------------------------------------------------
+    # GeoIP Cache & Network Intelligence Persistence
+    # --------------------------------------------------------------------------
+    def get_cached_geoip(self, ip_address: str) -> Optional[Dict[str, Any]]:
+        """Retrieve cached GeoIP intelligence for an IP address."""
+        if not ip_address:
+            return None
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM geoip_cache WHERE ip_address = ?", (ip_address.strip(),))
+            row = cursor.fetchone()
+            if not row:
+                return None
+            res = dict(row)
+            res["ip"] = res.get("ip_address")
+            res["is_public"] = bool(res.get("is_public", 1))
+            res["disclaimer"] = IDENTITY_DISCLAIMER
+            return res
+
+    def save_cached_geoip(self, record: Dict[str, Any]):
+        """Persist GeoIP intelligence record into SQLite cache."""
+        ip = record.get("ip") or record.get("ip_address")
+        if not ip:
+            return
+        ip = str(ip).strip()
+        is_pub = 1 if record.get("is_public", True) else 0
+        lookup_t = record.get("lookup_time") or datetime.datetime.now().isoformat()
+        exp_t = record.get("expires_at")
+        if not exp_t:
+            # Default TTL: 24h
+            exp_t = (datetime.datetime.now() + datetime.timedelta(hours=24)).isoformat()
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+            INSERT INTO geoip_cache (
+                ip_address, is_public, ip_type, country, country_code, region, city,
+                latitude, longitude, asn, org, provider, accuracy_radius, status,
+                lookup_time, expires_at, raw_response
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(ip_address) DO UPDATE SET
+                is_public=excluded.is_public,
+                ip_type=excluded.ip_type,
+                country=excluded.country,
+                country_code=excluded.country_code,
+                region=excluded.region,
+                city=excluded.city,
+                latitude=excluded.latitude,
+                longitude=excluded.longitude,
+                asn=excluded.asn,
+                org=excluded.org,
+                provider=excluded.provider,
+                accuracy_radius=excluded.accuracy_radius,
+                status=excluded.status,
+                lookup_time=excluded.lookup_time,
+                expires_at=excluded.expires_at,
+                raw_response=excluded.raw_response
+            """, (
+                ip, is_pub, record.get("ip_type", "public"),
+                record.get("country"), record.get("country_code"),
+                record.get("region"), record.get("city"),
+                record.get("latitude"), record.get("longitude"),
+                record.get("asn"), record.get("org"),
+                record.get("provider", "unknown"),
+                record.get("accuracy_radius"),
+                record.get("status", "available"),
+                lookup_t, exp_t,
+                json.dumps(record.get("raw_response", {})) if isinstance(record.get("raw_response"), dict) else str(record.get("raw_response") or "")
+            ))
+            conn.commit()
+
+    def get_all_cached_geoip(self) -> List[Dict[str, Any]]:
+        """Retrieve all cached GeoIP records."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM geoip_cache ORDER BY lookup_time DESC")
+            rows = cursor.fetchall()
+            results = []
+            for r in rows:
+                d = dict(r)
+                d["ip"] = d.get("ip_address")
+                d["is_public"] = bool(d.get("is_public", 1))
+                results.append(d)
+            return results
+
+    # --------------------------------------------------------------------------
+    # AI Incident Investigation Report Persistence
+    # --------------------------------------------------------------------------
+    def get_cached_investigation(self, incident_id: str, evidence_hash: str) -> Optional[Dict[str, Any]]:
+        """Retrieve cached structured Gemini/local investigation report by incident and evidence hash."""
+        if not incident_id or not evidence_hash:
+            return None
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+            SELECT * FROM incident_investigations
+            WHERE incident_id = ? AND evidence_hash = ?
+            ORDER BY created_at DESC LIMIT 1
+            """, (incident_id, evidence_hash))
+            row = cursor.fetchone()
+            if not row:
+                return None
+            res = dict(row)
+            try:
+                res["report"] = json.loads(res.get("report_json", "{}"))
+            except Exception:
+                res["report"] = {}
+            return res
+
+    def save_cached_investigation(
+        self,
+        incident_id: str,
+        evidence_hash: str,
+        provider: str,
+        model_name: Optional[str],
+        report_data: Union[Dict[str, Any], str]
+    ) -> str:
+        """Persist structured investigation report into cache table."""
+        inv_id = f"INV-{uuid.uuid4().hex[:8].upper()}"
+        now_str = datetime.datetime.now().isoformat()
+        report_json = json.dumps(report_data) if isinstance(report_data, dict) else str(report_data)
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+            INSERT INTO incident_investigations (
+                investigation_id, incident_id, evidence_hash, provider, model_name, report_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (inv_id, incident_id, evidence_hash, provider, model_name or "N/A", report_json, now_str))
+            conn.commit()
+        return inv_id
+
+    # --------------------------------------------------------------------------
+    # Continuous Real-Time Network Logs & 24h Safe-Log Retention Governance
+    # --------------------------------------------------------------------------
+    def insert_network_log(self, log_data: Optional[Dict[str, Any]] = None, **kwargs) -> str:
+        """
+        Insert a validated network telemetry log with automatic 24h retention calculation.
+        Supports both single dictionary argument and keyword arguments.
+        """
+        data = {}
+        if isinstance(log_data, dict):
+            data.update(log_data)
+        if kwargs:
+            data.update(kwargs)
+        log_data = data
+
+        log_id = log_data.get("log_id") or f"LOG-{uuid.uuid4().hex[:12].upper()}"
+        now_dt = datetime.datetime.now()
+        created_at = log_data.get("created_at") or now_dt.isoformat()
+        ts = log_data.get("timestamp") or now_dt.strftime("%Y-%m-%d %H:%M:%S")
+
+        src_ip = str(log_data.get("source_ip") or log_data.get("src_ip") or "0.0.0.0")
+        dst_ip = str(log_data.get("destination_ip") or log_data.get("dst_ip") or "")
+        src_port = log_data.get("source_port") or log_data.get("src_port")
+        dst_port = log_data.get("destination_port") or log_data.get("dst_port")
+        proto = str(log_data.get("protocol") or "TCP").upper()
+        pkt_size = int(log_data.get("packet_size") or log_data.get("bytes") or log_data.get("total_bytes") or 0)
+        event_type = str(log_data.get("event_type") or "network_flow")
+        collector_id = str(log_data.get("collector_id") or log_data.get("host_id") or "host_collector")
+        det_status = str(log_data.get("detection_status") or "unprocessed").lower()
+        severity = str(log_data.get("severity") or "Low")
+        det_reason = log_data.get("detection_reason")
+        ml_score = float(log_data.get("ml_anomaly_score") or 0.0)
+
+        # GeoIP fields
+        country = log_data.get("geoip_country") or log_data.get("country")
+        region = log_data.get("geoip_region") or log_data.get("region")
+        city = log_data.get("geoip_city") or log_data.get("city")
+        lat = log_data.get("latitude")
+        lon = log_data.get("longitude")
+        acc = log_data.get("accuracy_radius") or log_data.get("accuracy_km")
+        acc_km = log_data.get("accuracy_km") or log_data.get("accuracy_radius")
+        geoip_status = log_data.get("geoip_status") or ("resolved" if country else "pending")
+
+        # Retention classification
+        is_pres = int(log_data.get("is_preserved", 0))
+        ret_status = log_data.get("retention_status")
+        pres_at = log_data.get("preserved_at")
+        exp_status = log_data.get("export_status") or "not_exported"
+        inc_id = log_data.get("incident_id")
+        ingestion_delay = float(log_data.get("ingestion_delay_ms") or 0.0)
+        user_expires_at = log_data.get("expires_at")
+
+        if user_expires_at:
+            expires_at = user_expires_at
+            if not ret_status:
+                ret_status = "preserved" if is_pres else "auto_delete"
+        elif det_status == "safe":
+            if is_pres:
+                ret_status = "preserved"
+                expires_at = "9999-12-31T23:59:59"
+            else:
+                ret_status = ret_status or "auto_delete"
+                try:
+                    c_dt = datetime.datetime.fromisoformat(str(created_at).replace("Z", ""))
+                    if c_dt.tzinfo is not None:
+                        c_dt = c_dt.astimezone().replace(tzinfo=None)
+                    expires_at = (c_dt + datetime.timedelta(hours=self.retention_hours)).isoformat()
+                except Exception:
+                    expires_at = (now_dt + datetime.timedelta(hours=self.retention_hours)).isoformat()
+        elif det_status == "suspicious":
+            ret_status = "preserved"
+            expires_at = "9999-12-31T23:59:59"
+        else:
+            # Unprocessed / processing_failed - keep countdown on hold
+            ret_status = ret_status or "auto_delete"
+            expires_at = "9999-12-31T23:59:59"
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+            INSERT OR REPLACE INTO network_logs (
+                log_id, source_ip, destination_ip, source_port, destination_port,
+                protocol, timestamp, packet_size, event_type, collector_id,
+                detection_status, severity, detection_reason, ml_anomaly_score,
+                geoip_country, geoip_region, geoip_city, latitude, longitude,
+                accuracy_radius, accuracy_km, geoip_status, created_at, retention_status,
+                expires_at, is_preserved, preserved_at, export_status, incident_id,
+                ingestion_delay_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                log_id, src_ip, dst_ip, src_port, dst_port,
+                proto, ts, pkt_size, event_type, collector_id,
+                det_status, severity, det_reason, ml_score,
+                country, region, city, lat, lon,
+                acc, acc_km, geoip_status, created_at, ret_status,
+                expires_at, is_pres, pres_at, exp_status, inc_id,
+                ingestion_delay
+            ))
+            conn.commit()
+        return log_id
+
+    save_network_log = insert_network_log
+
+    def insert_network_logs_batch(self, logs: List[Dict[str, Any]]) -> int:
+        """
+        Batch-inserts multiple network logs in a single SQLite transaction with WAL efficiency.
+        """
+        if not logs:
+            return 0
+        now_dt = datetime.datetime.now()
+        now_iso = now_dt.isoformat()
+        default_exp = (now_dt + datetime.timedelta(hours=self.retention_hours)).isoformat()
+
+        rows = []
+        for log_data in logs:
+            log_id = log_data.get("log_id") or f"LOG-{uuid.uuid4().hex[:12].upper()}"
+            created_at = log_data.get("created_at") or now_iso
+            ts = log_data.get("timestamp") or now_dt.strftime("%Y-%m-%d %H:%M:%S")
+            src_ip = str(log_data.get("source_ip") or log_data.get("src_ip") or "0.0.0.0")
+            dst_ip = str(log_data.get("destination_ip") or log_data.get("dst_ip") or "")
+            src_port = log_data.get("source_port") or log_data.get("src_port")
+            dst_port = log_data.get("destination_port") or log_data.get("dst_port")
+            proto = str(log_data.get("protocol") or "TCP").upper()
+            pkt_size = int(log_data.get("packet_size") or log_data.get("bytes") or log_data.get("total_bytes") or 0)
+            event_type = str(log_data.get("event_type") or "network_flow")
+            collector_id = str(log_data.get("collector_id") or log_data.get("host_id") or "host_collector")
+            det_status = str(log_data.get("detection_status") or "unprocessed").lower()
+            severity = str(log_data.get("severity") or "Low")
+            det_reason = log_data.get("detection_reason")
+            ml_score = float(log_data.get("ml_anomaly_score") or 0.0)
+
+            country = log_data.get("geoip_country") or log_data.get("country")
+            region = log_data.get("geoip_region") or log_data.get("region")
+            city = log_data.get("geoip_city") or log_data.get("city")
+            lat = log_data.get("latitude")
+            lon = log_data.get("longitude")
+            acc = log_data.get("accuracy_radius") or log_data.get("accuracy_km")
+            acc_km = log_data.get("accuracy_km") or log_data.get("accuracy_radius")
+            geoip_status = log_data.get("geoip_status") or ("resolved" if country else "pending")
+
+            is_pres = int(log_data.get("is_preserved", 0))
+            pres_at = log_data.get("preserved_at")
+            exp_status = log_data.get("export_status") or "not_exported"
+            inc_id = log_data.get("incident_id")
+            ingestion_delay = float(log_data.get("ingestion_delay_ms") or 0.0)
+
+            if det_status == "safe":
+                if is_pres:
+                    ret_status = "preserved"
+                    exp_at = "9999-12-31T23:59:59"
+                else:
+                    ret_status = "auto_delete"
+                    try:
+                        c_dt = datetime.datetime.fromisoformat(str(created_at).replace("Z", ""))
+                        if c_dt.tzinfo is not None:
+                            c_dt = c_dt.astimezone().replace(tzinfo=None)
+                        exp_at = (c_dt + datetime.timedelta(hours=self.retention_hours)).isoformat()
+                    except Exception:
+                        exp_at = default_exp
+            elif det_status == "suspicious":
+                ret_status = "preserved"
+                exp_at = "9999-12-31T23:59:59"
+            else:
+                ret_status = "auto_delete"
+                exp_at = "9999-12-31T23:59:59"
+
+            rows.append((
+                log_id, src_ip, dst_ip, src_port, dst_port,
+                proto, ts, pkt_size, event_type, collector_id,
+                det_status, severity, det_reason, ml_score,
+                country, region, city, lat, lon,
+                acc, acc_km, geoip_status, created_at, ret_status,
+                exp_at, is_pres, pres_at, exp_status, inc_id,
+                ingestion_delay
+            ))
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.executemany("""
+            INSERT OR REPLACE INTO network_logs (
+                log_id, source_ip, destination_ip, source_port, destination_port,
+                protocol, timestamp, packet_size, event_type, collector_id,
+                detection_status, severity, detection_reason, ml_anomaly_score,
+                geoip_country, geoip_region, geoip_city, latitude, longitude,
+                accuracy_radius, accuracy_km, geoip_status, created_at, retention_status,
+                expires_at, is_preserved, preserved_at, export_status, incident_id,
+                ingestion_delay_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, rows)
+            conn.commit()
+        return len(rows)
+
+    def update_log_detection_status(
+        self,
+        log_id: str,
+        detection_status: str,
+        severity: str = "Low",
+        reason: Optional[str] = None,
+        incident_id: Optional[str] = None,
+        ml_anomaly_score: Optional[float] = None
+    ) -> bool:
+        """
+        Updates the evaluation outcome of an unprocessed log once evaluated by detection pipeline.
+        Calculates 24-hour expiration when marked safe, or marks preserved when suspicious.
+        """
+        det_status = detection_status.lower()
+        now_dt = datetime.datetime.now(datetime.timezone.utc)
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT created_at, is_preserved FROM network_logs WHERE log_id = ?", (log_id,))
+            row = cursor.fetchone()
+            if not row:
+                return False
+            created_at = row["created_at"]
+            is_pres = row["is_preserved"]
+
+            if det_status == "safe":
+                if is_pres:
+                    ret_status = "preserved"
+                    expires_at = "9999-12-31T23:59:59"
+                else:
+                    ret_status = "auto_delete"
+                    try:
+                        c_dt = datetime.datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                    except Exception:
+                        c_dt = now_dt
+                    expires_at = (c_dt + datetime.timedelta(hours=self.retention_hours)).isoformat()
+            elif det_status == "suspicious":
+                ret_status = "preserved"
+                expires_at = "9999-12-31T23:59:59"
+            else:
+                ret_status = "auto_delete"
+                expires_at = "9999-12-31T23:59:59"
+
+            query = """
+            UPDATE network_logs SET
+                detection_status = ?,
+                severity = ?,
+                detection_reason = COALESCE(?, detection_reason),
+                incident_id = COALESCE(?, incident_id),
+                retention_status = ?,
+                expires_at = ?
+            """
+            params = [det_status, severity, reason, incident_id, ret_status, expires_at]
+            if ml_anomaly_score is not None:
+                query += ", ml_anomaly_score = ?"
+                params.append(ml_anomaly_score)
+            query += " WHERE log_id = ?"
+            params.append(log_id)
+
+            cursor.execute(query, params)
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def get_network_logs(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        status_filter: Optional[str] = None,
+        severity_filter: Optional[str] = None,
+        preserved_only: bool = False,
+        search: Optional[str] = None,
+        status: Optional[str] = None,
+        detection_status: Optional[str] = None,
+        retention_status: Optional[str] = None,
+        severity: Optional[str] = None,
+        **kwargs
+    ) -> List[Dict[str, Any]]:
+        eff_status = status_filter or status or detection_status
+        eff_sev = severity_filter or severity
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            query = "SELECT * FROM network_logs WHERE 1=1"
+            params = []
+            if eff_status and eff_status != "all":
+                query += " AND LOWER(detection_status) = ?"
+                params.append(eff_status.lower())
+            if eff_sev and eff_sev != "all":
+                query += " AND severity = ?"
+                params.append(eff_sev)
+            if retention_status and retention_status != "all":
+                query += " AND LOWER(retention_status) = ?"
+                params.append(retention_status.lower())
+            if preserved_only:
+                query += " AND (is_preserved = 1 OR retention_status = 'preserved')"
+            if search:
+                query += " AND (source_ip LIKE ? OR destination_ip LIKE ? OR log_id LIKE ? OR detection_reason LIKE ?)"
+                term = f"%{search}%"
+                params.extend([term, term, term, term])
+
+            query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+            params.extend([limit, offset])
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            return [self._format_network_log_row(dict(r)) for r in rows]
+
+    @staticmethod
+    def _format_network_log_row(d: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        if not d:
+            return d
+        if "city" not in d and "geoip_city" in d:
+            d["city"] = d["geoip_city"]
+        if "country" not in d and "geoip_country" in d:
+            d["country"] = d["geoip_country"]
+        if "region" not in d and "geoip_region" in d:
+            d["region"] = d["geoip_region"]
+        if "accuracy_km" not in d and "accuracy_radius" in d:
+            d["accuracy_km"] = d["accuracy_radius"]
+        elif "accuracy_radius" not in d and "accuracy_km" in d:
+            d["accuracy_radius"] = d["accuracy_km"]
+        return d
+
+    def get_network_log_by_id(self, log_id: str) -> Optional[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM network_logs WHERE log_id = ?", (log_id,))
+            row = cursor.fetchone()
+            return self._format_network_log_row(dict(row)) if row else None
+
+    def get_geolocated_suspicious_logs(
+        self,
+        limit: int = 500,
+        time_range: str = "24h",
+        severity_filter: Optional[str] = None,
+        country_filter: Optional[str] = None,
+        attack_type_filter: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Retrieves geolocated suspicious events stored in SQLite network_logs for Threat Map.
+        Only returns suspicious logs with valid latitude and longitude. Excludes private IPs.
+        """
+        now_dt = datetime.datetime.now()
+        delta_map = {
+            "15m": datetime.timedelta(minutes=15),
+            "1h": datetime.timedelta(hours=1),
+            "24h": datetime.timedelta(hours=24),
+            "7d": datetime.timedelta(days=7),
+            "all": None
+        }
+        delta = delta_map.get(time_range.lower())
+        cutoff_iso = (now_dt - delta).isoformat() if delta else None
+        cutoff_str = (now_dt - delta).strftime("%Y-%m-%d %H:%M:%S") if delta else None
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            query = """
+            SELECT * FROM network_logs
+            WHERE (detection_status = 'suspicious' OR severity IN ('Medium', 'High', 'Critical'))
+              AND latitude IS NOT NULL
+              AND longitude IS NOT NULL
+            """
+            params: List[Any] = []
+            if cutoff_iso:
+                query += " AND (created_at >= ? OR timestamp >= ?)"
+                params.extend([cutoff_iso, cutoff_str])
+            if severity_filter and severity_filter != "All":
+                query += " AND severity = ?"
+                params.append(severity_filter)
+            if country_filter and country_filter != "All":
+                query += " AND geoip_country = ?"
+                params.append(country_filter)
+            if attack_type_filter and attack_type_filter != "All":
+                query += " AND (detection_reason LIKE ? OR event_type LIKE ?)"
+                params.extend([f"%{attack_type_filter}%", f"%{attack_type_filter}%"])
+
+            query += " ORDER BY created_at DESC LIMIT ?"
+            params.append(limit)
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            return [self._format_network_log_row(dict(r)) for r in rows]
+
+    def seed_baseline_network_logs(self):
+        """Seed initial real-time network logs with realistic geolocatable threats if network_logs is empty."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) as c FROM network_logs;")
+            row = cursor.fetchone()
+            count = row["c"] if row else 0
+
+        if count > 0:
+            return
+
+        from geoip_service import get_geoip_service
+        geo_svc = get_geoip_service(db_manager=self)
+        now_dt = datetime.datetime.now()
+
+        baseline_events = [
+            {
+                "src_ip": "128.30.52.100",
+                "dst_ip": "10.0.0.15",
+                "dst_port": 445,
+                "protocol": "TCP",
+                "packet_size": 512,
+                "det_status": "suspicious",
+                "severity": "High",
+                "reason": "Port Scan Probe targeting port 445",
+                "collector_id": "host-agent"
+            },
+            {
+                "src_ip": "198.51.100.23",
+                "dst_ip": "10.0.0.22",
+                "dst_port": 22,
+                "protocol": "TCP",
+                "packet_size": 1024,
+                "det_status": "suspicious",
+                "severity": "Critical",
+                "reason": "SSH Brute Force Credential Spraying",
+                "collector_id": "host-agent"
+            },
+            {
+                "src_ip": "198.51.100.99",
+                "dst_ip": "10.0.0.80",
+                "dst_port": 8080,
+                "protocol": "TCP",
+                "packet_size": 256,
+                "det_status": "suspicious",
+                "severity": "High",
+                "reason": "Web Reconnaissance Vulnerability Scan",
+                "collector_id": "host-agent"
+            },
+            {
+                "src_ip": "192.168.1.15",
+                "dst_ip": "192.168.1.1",
+                "dst_port": 139,
+                "protocol": "TCP",
+                "packet_size": 128,
+                "det_status": "suspicious",
+                "severity": "Medium",
+                "reason": "Internal NetBIOS / SMB Probe",
+                "collector_id": "host-agent"
+            },
+            {
+                "src_ip": "192.168.1.100",
+                "dst_ip": "1.1.1.1",
+                "dst_port": 443,
+                "protocol": "TCP",
+                "packet_size": 64,
+                "det_status": "safe",
+                "severity": "Low",
+                "reason": "Nominal HTTPS Egress Flow",
+                "collector_id": "host-agent"
+            }
+        ]
+
+        for ev in baseline_events:
+            src = ev["src_ip"]
+            geo = geo_svc.get_ip_intelligence(src)
+            self.insert_network_log(
+                source_ip=src,
+                destination_ip=ev["dst_ip"],
+                destination_port=ev["dst_port"],
+                protocol=ev["protocol"],
+                packet_size=ev["packet_size"],
+                timestamp=now_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                created_at=now_dt.isoformat(),
+                collector_id=ev["collector_id"],
+                detection_status=ev["det_status"],
+                severity=ev["severity"],
+                detection_reason=ev["reason"],
+                geoip_country=geo.get("country"),
+                geoip_region=geo.get("region"),
+                geoip_city=geo.get("city"),
+                latitude=geo.get("latitude"),
+                longitude=geo.get("longitude"),
+                accuracy_km=geo.get("accuracy_km") or geo.get("accuracy_radius"),
+                accuracy_radius=geo.get("accuracy_radius"),
+                geoip_status=geo.get("status", "unknown")
+            )
+
+    def get_threat_map_data(
+        self,
+        time_range: str = "Last 24 Hours",
+        severity_filter: Optional[str] = None,
+        country_filter: Optional[str] = None,
+        attack_category_filter: Optional[str] = None,
+        limit: int = 1000
+    ) -> Dict[str, Any]:
+        """
+        Retrieves real-time and persisted suspicious network events from SQLite for the Threat Intelligence Map.
+        Only events with valid GeoIP coordinates are plotted as markers.
+        Unlocated suspicious IPs (private, unresolvable) are counted towards unlocated statistics.
+        Never fabricates coordinates or synthetic locations.
+        """
+        self.seed_baseline_network_logs()
+        from geoip_service import get_geoip_service
+        geoip_svc = get_geoip_service(db_manager=self)
+        now_dt = datetime.datetime.now()
+        time_map = {
+            "15m": datetime.timedelta(minutes=15),
+            "last 15 minutes": datetime.timedelta(minutes=15),
+            "1h": datetime.timedelta(hours=1),
+            "last 1 hour": datetime.timedelta(hours=1),
+            "24h": datetime.timedelta(hours=24),
+            "last 24 hours": datetime.timedelta(hours=24),
+            "7d": datetime.timedelta(days=7),
+            "last 7 days": datetime.timedelta(days=7),
+            "all": None,
+            "all time": None
+        }
+        delta = time_map.get(time_range.lower(), datetime.timedelta(hours=24))
+        cutoff_iso = (now_dt - delta).isoformat() if delta else None
+        cutoff_str = (now_dt - delta).strftime("%Y-%m-%d %H:%M:%S") if delta else None
+
+        sev_order = {"Critical": 4, "High": 3, "Medium": 2, "Low": 1}
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            # 1. Query all suspicious network logs
+            query = """
+            SELECT * FROM network_logs
+            WHERE (detection_status = 'suspicious' OR severity IN ('Medium', 'High', 'Critical'))
+            """
+            params: List[Any] = []
+
+            if cutoff_iso:
+                query += " AND (created_at >= ? OR timestamp >= ?)"
+                params.extend([cutoff_iso, cutoff_str])
+
+            if severity_filter and severity_filter not in ("All", "All Severities"):
+                query += " AND severity = ?"
+                params.append(severity_filter)
+
+            if country_filter and country_filter not in ("All", "All Countries"):
+                query += " AND geoip_country = ?"
+                params.append(country_filter)
+
+            if attack_category_filter and attack_category_filter not in ("All", "All Categories"):
+                query += " AND (detection_reason LIKE ? OR event_type LIKE ?)"
+                params.extend([f"%{attack_category_filter}%", f"%{attack_category_filter}%"])
+
+            query += " ORDER BY created_at DESC LIMIT ?"
+            params.append(limit)
+
+            cursor.execute(query, params)
+            log_rows = [self._format_network_log_row(dict(r)) for r in cursor.fetchall()]
+
+            # 2. Query incidents table from SQLite
+            inc_query = "SELECT * FROM incidents WHERE 1=1"
+            inc_params: List[Any] = []
+            if cutoff_iso:
+                inc_query += " AND (timestamp >= ? OR last_seen >= ?)"
+                inc_params.extend([cutoff_str, cutoff_str])
+            if severity_filter and severity_filter not in ("All", "All Severities"):
+                inc_query += " AND severity = ?"
+                inc_params.append(severity_filter)
+            if attack_category_filter and attack_category_filter not in ("All", "All Categories"):
+                inc_query += " AND category = ?"
+                inc_params.append(attack_category_filter)
+
+            inc_query += " ORDER BY timestamp DESC LIMIT ?"
+            inc_params.append(limit)
+            cursor.execute(inc_query, inc_params)
+            inc_rows = [dict(r) for r in cursor.fetchall()]
+
+            # 3. Retrieve distinct available countries and categories for filters
+            cursor.execute("""
+            SELECT DISTINCT geoip_country FROM network_logs
+            WHERE geoip_country IS NOT NULL AND geoip_country != ''
+            ORDER BY geoip_country
+            """)
+            avail_countries = set(r["geoip_country"] for r in cursor.fetchall() if r["geoip_country"])
+
+            cursor.execute("""
+            SELECT DISTINCT detection_reason FROM network_logs
+            WHERE detection_reason IS NOT NULL AND detection_reason != ''
+            LIMIT 50
+            """)
+            avail_cats = set(r["detection_reason"] for r in cursor.fetchall() if r["detection_reason"])
+
+            for inc in inc_rows:
+                if inc.get("category"):
+                    avail_cats.add(inc["category"])
+                if inc.get("geoip_country"):
+                    avail_countries.add(inc["geoip_country"])
+
+        seen_incident_ids = set()
+        for log in log_rows:
+            if log.get("incident_id"):
+                seen_incident_ids.add(log["incident_id"])
+
+        unified_records = []
+        for log in log_rows:
+            unified_records.append({
+                "source_ip": log.get("source_ip", "0.0.0.0"),
+                "severity": log.get("severity", "Medium"),
+                "category": log.get("detection_reason") or log.get("event_type") or "Suspicious Activity",
+                "timestamp": log.get("timestamp") or log.get("created_at") or now_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                "latitude": log.get("latitude"),
+                "longitude": log.get("longitude"),
+                "country": log.get("geoip_country") or log.get("country"),
+                "city": log.get("geoip_city") or log.get("city"),
+                "region": log.get("geoip_region") or log.get("region"),
+                "accuracy_km": log.get("accuracy_km") or log.get("accuracy_radius"),
+                "id": log.get("log_id")
+            })
+
+        for inc in inc_rows:
+            if inc.get("incident_id") in seen_incident_ids:
+                continue
+            src_ip = inc.get("source_ip", "0.0.0.0")
+            c_geo = self.get_cached_geoip(src_ip) if src_ip else None
+            lat = inc.get("latitude") or (c_geo.get("latitude") if c_geo else None)
+            lon = inc.get("longitude") or (c_geo.get("longitude") if c_geo else None)
+            country = inc.get("geoip_country") or (c_geo.get("country") if c_geo else None)
+            city = inc.get("geoip_city") or (c_geo.get("city") if c_geo else None)
+            region = inc.get("geoip_region") or (c_geo.get("region") if c_geo else None)
+            acc = inc.get("accuracy_km") or inc.get("accuracy_radius") or (c_geo.get("accuracy_radius") if c_geo else None)
+
+            if (lat is None or lon is None) and src_ip and src_ip not in ("0.0.0.0", "Distributed Sources"):
+                try:
+                    intel = geoip_svc.get_ip_intelligence(src_ip)
+                    if intel.get("is_public") and intel.get("latitude") is not None:
+                        lat = intel["latitude"]
+                        lon = intel["longitude"]
+                        country = intel.get("country") or country
+                        city = intel.get("city") or city
+                        region = intel.get("region") or region
+                        acc = intel.get("accuracy_km") or acc
+                except Exception:
+                    pass
+
+            if country:
+                avail_countries.add(country)
+
+            if country_filter and country_filter not in ("All", "All Countries") and country != country_filter:
+                continue
+
+            unified_records.append({
+                "source_ip": src_ip,
+                "severity": inc.get("severity", "Medium"),
+                "category": inc.get("category", "Security Incident"),
+                "timestamp": inc.get("last_seen") or inc.get("timestamp") or now_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                "latitude": lat,
+                "longitude": lon,
+                "country": country,
+                "city": city,
+                "region": region,
+                "accuracy_km": acc,
+                "id": inc.get("incident_id")
+            })
+
+        # Process and aggregate rows
+        geo_markers = {}
+        country_aggs = {}
+        geolocated_ips = set()
+        unlocated_ips = set()
+        high_critical_count = 0
+        total_suspicious_events = len(unified_records)
+
+        for rec in unified_records:
+            s_ip = rec.get("source_ip", "0.0.0.0")
+            s_sev = rec.get("severity", "Medium")
+            if s_sev in ("High", "Critical"):
+                high_critical_count += 1
+
+            lat = rec.get("latitude")
+            lon = rec.get("longitude")
+            s_ts = rec.get("timestamp") or now_dt.strftime("%Y-%m-%d %H:%M:%S")
+            s_cat = rec.get("category", "Suspicious Activity")
+            c_name = rec.get("country") or "Unknown"
+            city_name = rec.get("city") or "Unknown City"
+            reg_name = rec.get("region") or ""
+
+            # Check if valid coordinates
+            has_valid_coords = False
+            lat_f, lon_f = 0.0, 0.0
+            if lat is not None and lon is not None:
+                try:
+                    lat_f = float(lat)
+                    lon_f = float(lon)
+                    has_valid_coords = True
+                except (ValueError, TypeError):
+                    has_valid_coords = False
+
+            if has_valid_coords:
+                geolocated_ips.add(s_ip)
+                coord_key = (round(lat_f, 2), round(lon_f, 2))
+
+                if coord_key not in geo_markers:
+                    geo_markers[coord_key] = {
+                        "latitude": lat_f,
+                        "longitude": lon_f,
+                        "city": city_name,
+                        "region": reg_name,
+                        "country": c_name,
+                        "source_ips": set(),
+                        "event_count": 0,
+                        "max_severity": s_sev,
+                        "categories": set(),
+                        "first_seen": s_ts,
+                        "last_seen": s_ts,
+                        "accuracy_km": rec.get("accuracy_km") or 20,
+                        "record_ids": []
+                    }
+                m = geo_markers[coord_key]
+                m["source_ips"].add(s_ip)
+                m["event_count"] += 1
+                m["categories"].add(s_cat)
+                m["record_ids"].append(rec.get("id"))
+
+                # Update timestamps
+                if s_ts < m["first_seen"]:
+                    m["first_seen"] = s_ts
+                if s_ts > m["last_seen"]:
+                    m["last_seen"] = s_ts
+
+                # Update max severity
+                if sev_order.get(s_sev, 1) > sev_order.get(m["max_severity"], 1):
+                    m["max_severity"] = s_sev
+
+                # Country aggregation
+                if c_name not in country_aggs:
+                    country_aggs[c_name] = {
+                        "Country": c_name,
+                        "Event Count": 0,
+                        "Unique Source IPs": set(),
+                        "Top Category": s_cat
+                    }
+                country_aggs[c_name]["Event Count"] += 1
+                country_aggs[c_name]["Unique Source IPs"].add(s_ip)
+            else:
+                unlocated_ips.add(s_ip)
+
+        # Build marker list
+        marker_list = []
+        for m in geo_markers.values():
+            m_copy = dict(m)
+            m_copy["source_ips_str"] = ", ".join(sorted(list(m["source_ips"])))
+            m_copy["categories_str"] = ", ".join(sorted(list(m["categories"])))
+            m_copy["location_label"] = f"{m['city']}, {m['country']}"
+            m_copy["source_ip_count"] = len(m["source_ips"])
+            marker_list.append(m_copy)
+
+        return {
+            "markers": marker_list,
+            "statistics": {
+                "total_geolocated_sources": len(geolocated_ips),
+                "countries_detected": len(country_aggs),
+                "total_suspicious_events": total_suspicious_events,
+                "unlocated_source_ips": len(unlocated_ips),
+                "high_critical_events": high_critical_count
+            },
+            "country_rollups": country_aggs,
+            "unlocated_ips": sorted(list(unlocated_ips)),
+            "available_countries": sorted(list(avail_countries)),
+            "available_categories": sorted(list(avail_cats)),
+            "raw_records": unified_records
+        }
+
+    def preserve_network_log(self, log_id: str, operator: str = "Analyst") -> Dict[str, Any]:
+        """Marks a log as preserved by user, preventing automatic 24h deletion."""
+        now_iso = datetime.datetime.now().isoformat()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+            UPDATE network_logs SET
+                is_preserved = 1,
+                retention_status = 'preserved',
+                preserved_at = ?,
+                expires_at = '9999-12-31T23:59:59'
+            WHERE log_id = ?
+            """, (now_iso, log_id))
+            conn.commit()
+            success = cursor.rowcount > 0
+        if success:
+            self.log_system_activity(
+                activity_type="user_retention_decision",
+                details=f"User preserved log {log_id}. Prevented automatic 24h deletion.",
+                operator=operator,
+                result="SUCCESS"
+            )
+            return {"status": "PRESERVED", "log_id": log_id, "preserved": True}
+        return {"status": "FAILED", "log_id": log_id, "message": "Log not found"}
+
+    def unpreserve_network_log(self, log_id: str, operator: str = "Analyst") -> Dict[str, Any]:
+        """Removes user preservation, restoring normal 24h expiration countdown."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT created_at, detection_status FROM network_logs WHERE log_id = ?", (log_id,))
+            row = cursor.fetchone()
+            if not row:
+                return {"status": "FAILED", "log_id": log_id, "message": "Log not found"}
+            created_at = row["created_at"]
+            det_status = row["detection_status"]
+
+            now_dt = datetime.datetime.now()
+            if det_status == "safe":
+                try:
+                    c_dt = datetime.datetime.fromisoformat(str(created_at).replace("Z", ""))
+                    if c_dt.tzinfo is not None:
+                        c_dt = c_dt.astimezone().replace(tzinfo=None)
+                except Exception:
+                    c_dt = now_dt
+                expires_at = (c_dt + datetime.timedelta(hours=self.retention_hours)).isoformat()
+            else:
+                expires_at = "9999-12-31T23:59:59"
+
+            cursor.execute("""
+            UPDATE network_logs SET
+                is_preserved = 0,
+                retention_status = 'auto_delete',
+                preserved_at = NULL,
+                expires_at = ?
+            WHERE log_id = ?
+            """, (expires_at, log_id))
+            conn.commit()
+            success = cursor.rowcount > 0
+        if success:
+            self.log_system_activity(
+                activity_type="user_retention_decision",
+                details=f"User removed preservation for log {log_id}. Re-enabled 24h automatic deletion.",
+                operator=operator,
+                result="SUCCESS"
+            )
+            return {"status": "UNPRESERVED", "log_id": log_id, "preserved": False}
+        return {"status": "FAILED", "log_id": log_id, "message": "Log not found"}
+
+    def delete_network_log_now(self, log_id: str, operator: str = "Analyst") -> Dict[str, Any]:
+        """Immediately deletes a safe log upon user request. Protects suspicious logs from accidental deletion."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT detection_status FROM network_logs WHERE log_id = ?", (log_id,))
+            row = cursor.fetchone()
+            if not row:
+                return {"status": "NOT_FOUND", "message": f"Log {log_id} not found."}
+            if row["detection_status"] == "suspicious":
+                return {"status": "REJECTED", "message": f"Log {log_id} is classified as suspicious threat evidence and cannot be deleted via safe log controls."}
+            cursor.execute("DELETE FROM network_logs WHERE log_id = ?", (log_id,))
+            conn.commit()
+            success = cursor.rowcount > 0
+        if success:
+            self.log_system_activity(
+                activity_type="user_retention_decision",
+                details=f"User explicitly deleted safe log {log_id} immediately.",
+                operator=operator,
+                result="SUCCESS"
+            )
+            return {"status": "DELETED", "log_id": log_id}
+        return {"status": "FAILED", "message": "Failed to delete log"}
+
+    delete_network_log = delete_network_log_now
+
+    def bulk_preserve_network_logs(self, log_ids: List[str], operator: str = "Analyst") -> int:
+        if not log_ids:
+            return 0
+        now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            placeholders = ",".join("?" for _ in log_ids)
+            cursor.execute(f"""
+            UPDATE network_logs SET
+                is_preserved = 1,
+                retention_status = 'preserved',
+                preserved_at = ?,
+                expires_at = '9999-12-31T23:59:59'
+            WHERE log_id IN ({placeholders})
+            """, [now_iso] + log_ids)
+            conn.commit()
+            count = cursor.rowcount
+        self.log_system_activity(
+            activity_type="user_retention_decision",
+            details=f"User bulk-preserved {count} log(s).",
+            operator=operator,
+            result="SUCCESS"
+        )
+        return count
+
+    def bulk_delete_network_logs_now(self, log_ids: List[str], operator: str = "Analyst") -> int:
+        if not log_ids:
+            return 0
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            placeholders = ",".join("?" for _ in log_ids)
+            cursor.execute(f"DELETE FROM network_logs WHERE log_id IN ({placeholders})", log_ids)
+            conn.commit()
+            count = cursor.rowcount
+        self.log_system_activity(
+            activity_type="user_retention_decision",
+            details=f"User bulk-deleted {count} log(s) immediately.",
+            operator=operator,
+            result="SUCCESS"
+        )
+        return count
+
+    def purge_expired_safe_logs(self) -> Dict[str, Any]:
+        """
+        Automatic Safe-Log Deletion — 24 Hours.
+        Deletes ONLY logs where:
+          1. detection_status is 'safe'
+          2. is_preserved is 0
+          3. retention_status is not 'preserved'
+          4. expires_at <= current timestamp (UTC)
+        Never deletes suspicious logs, security incidents, or unprocessed logs.
+        Transactional and safe across restarts.
+        """
+        now_dt = datetime.datetime.now()
+        now_iso = now_dt.isoformat()
+        now_utc_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+            SELECT log_id FROM network_logs
+            WHERE detection_status = 'safe'
+              AND is_preserved = 0
+              AND retention_status != 'preserved'
+              AND (expires_at <= ? OR expires_at <= ?)
+            """, (now_iso, now_utc_iso))
+            rows = cursor.fetchall()
+            count = len(rows)
+
+            if count > 0:
+                cursor.execute("""
+                DELETE FROM network_logs
+                WHERE detection_status = 'safe'
+                  AND is_preserved = 0
+                  AND retention_status != 'preserved'
+                  AND (expires_at <= ? OR expires_at <= ?)
+                """, (now_iso, now_utc_iso))
+                conn.commit()
+
+        self.log_system_activity(
+            activity_type="retention_cleanup",
+            details=f"Purged {count} expired safe log(s) older than {self.retention_hours} hours.",
+            operator="Retention Watchdog",
+            result="SUCCESS"
+        )
+        return {
+            "status": "success",
+            "purged_count": count,
+            "purged_at": now_iso,
+            "retention_hours": self.retention_hours
+        }
+
+    def get_log_retention_statistics(self) -> Dict[str, Any]:
+        """
+        Calculates live retention figures directly from actual SQLite database records.
+        """
+        now_dt = datetime.datetime.now(datetime.timezone.utc)
+        now_iso = now_dt.isoformat()
+        one_hour_iso = (now_dt + datetime.timedelta(hours=1)).isoformat()
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) as c FROM network_logs;")
+            total_logs = cursor.fetchone()["c"]
+
+            cursor.execute("""
+            SELECT COUNT(*) as c FROM network_logs
+            WHERE detection_status = 'safe' AND is_preserved = 0;
+            """)
+            safe_pending = cursor.fetchone()["c"]
+
+            cursor.execute("""
+            SELECT COUNT(*) as c FROM network_logs
+            WHERE is_preserved = 1 OR retention_status = 'preserved';
+            """)
+            preserved_logs = cursor.fetchone()["c"]
+
+            cursor.execute("""
+            SELECT COUNT(*) as c FROM network_logs
+            WHERE detection_status = 'safe' AND is_preserved = 0 AND expires_at <= ? AND expires_at > ?;
+            """, (one_hour_iso, now_iso))
+            expiring_soon = cursor.fetchone()["c"]
+
+            cursor.execute("""
+            SELECT COUNT(*) as c FROM network_logs
+            WHERE detection_status = 'suspicious' OR severity IN ('Medium', 'High', 'Critical');
+            """)
+            suspicious_logs = cursor.fetchone()["c"]
+
+            cursor.execute("""
+            SELECT details, timestamp FROM system_activity
+            WHERE activity_type = 'retention_cleanup'
+            ORDER BY timestamp DESC LIMIT 1;
+            """)
+            last_cleanup_row = cursor.fetchone()
+            last_cleanup = dict(last_cleanup_row) if last_cleanup_row else None
+
+            cursor.execute("""
+            SELECT details FROM system_activity
+            WHERE activity_type = 'retention_cleanup' AND result = 'SUCCESS';
+            """)
+            purged_rows = cursor.fetchall()
+            total_purged = 0
+            for r in purged_rows:
+                match = re.search(r"Purged\s+(\d+)\s+expired", r["details"] or "")
+                if match:
+                    total_purged += int(match.group(1))
+
+        return {
+            "total_logs": total_logs,
+            "safe_pending_deletion": safe_pending,
+            "preserved_logs": preserved_logs,
+            "expiring_soon": expiring_soon,
+            "auto_deleted_count": total_purged,
+            "suspicious_logs": suspicious_logs,
+            "next_cleanup_time": (now_dt + datetime.timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S UTC"),
+            "last_cleanup_result": last_cleanup.get("details") if last_cleanup else "No cleanups executed yet",
+            "last_cleanup_time": last_cleanup.get("timestamp") if last_cleanup else "None"
+        }
+
+    def export_network_logs(self, log_ids: Optional[List[str]] = None, format_type: str = "json") -> str:
+        """
+        Exports selected or recent network logs as JSON or CSV format.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            if log_ids:
+                placeholders = ",".join("?" for _ in log_ids)
+                cursor.execute(f"SELECT * FROM network_logs WHERE log_id IN ({placeholders}) ORDER BY created_at DESC", log_ids)
+            else:
+                cursor.execute("SELECT * FROM network_logs ORDER BY created_at DESC LIMIT 1000")
+            rows = cursor.fetchall()
+            logs_list = [dict(r) for r in rows]
+
+            if log_ids and logs_list:
+                cursor.execute(f"UPDATE network_logs SET export_status = 'exported' WHERE log_id IN ({placeholders})", log_ids)
+                conn.commit()
+
+        if format_type.lower() == "csv":
+            df = pd.DataFrame(logs_list)
+            return df.to_csv(index=False)
+        else:
+            return json.dumps(logs_list, indent=2)
+
+    def log_system_activity(
+        self,
+        activity_type: str,
+        details: str,
+        operator: str = "System",
+        result: str = "SUCCESS"
+    ) -> str:
+        act_id = f"ACT-{uuid.uuid4().hex[:8].upper()}"
+        now_iso = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+            INSERT INTO system_activity (activity_id, timestamp, activity_type, operator, details, result)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """, (act_id, now_iso, activity_type, operator, details, result))
+            conn.commit()
+        return act_id
+
+    def get_system_activities(self, limit: int = 50, activity_type: Optional[str] = None) -> List[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            if activity_type:
+                cursor.execute("""
+                SELECT * FROM system_activity WHERE activity_type = ? ORDER BY timestamp DESC LIMIT ?
+                """, (activity_type, limit))
+            else:
+                cursor.execute("""
+                SELECT * FROM system_activity ORDER BY timestamp DESC LIMIT ?
+                """, (limit,))
+            rows = cursor.fetchall()
+            return [dict(r) for r in rows]
+
+    def start_retention_cleanup_scheduler(self, interval_seconds: int = 300):
+        """Starts background retention cleanup thread for this database instance."""
+        return start_retention_cleanup_scheduler(self, interval_seconds=interval_seconds)
+
+
+# ------------------------------------------------------------------------------
+# Background Retention Watchdog Scheduler
+# ------------------------------------------------------------------------------
+_scheduler_thread = None
+_scheduler_lock = threading.Lock()
+
+def start_retention_cleanup_scheduler(db_manager: Optional[DatabaseManager] = None, interval_seconds: int = 300):
+    """Starts background retention cleanup thread running periodically (default 5 minutes)."""
+    global _scheduler_thread
+    with _scheduler_lock:
+        if _scheduler_thread is not None and _scheduler_thread.is_alive():
+            return
+        db = db_manager or get_db()
+        def _worker():
+            import time
+            while True:
+                try:
+                    time.sleep(interval_seconds)
+                    db.purge_expired_safe_logs()
+                except Exception as e:
+                    try:
+                        db.log_system_activity("system_error", f"Retention scheduler error: {e}", result="FAILURE")
+                    except Exception:
+                        pass
+        _scheduler_thread = threading.Thread(target=_worker, daemon=True, name="SentinelAI-RetentionScheduler")
+        _scheduler_thread.start()
 
 
 # Factory function

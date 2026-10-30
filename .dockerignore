@@ -38,3 +38,8 @@ scratch/
 *.db-shm
 sentinel_data/
 sentinel_models/
+
+# MaxMind GeoIP Database (mounted at runtime via volume, never baked into images)
+*.mmdb
+data/*.mmdb
+*.tar.gz

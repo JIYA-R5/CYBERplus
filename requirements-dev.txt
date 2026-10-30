@@ -11,5 +11,9 @@ plotly>=5.18.0
 # Optional Scikit-Learn Machine Learning Package
 scikit-learn>=1.3.0
 
+# MaxMind GeoLite2 City Reader
+maxminddb>=2.5.0
+geoip2>=5.0.0
+
 # Automated Testing Suite
 pytest>=7.4.0

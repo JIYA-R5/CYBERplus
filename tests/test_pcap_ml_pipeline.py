@@ -352,8 +352,13 @@ def test_stream_and_database_persistence():
     assert ev_id.startswith("EVT-")
 
     # Verify event persisted
-    events = db.get_telemetry_events(limit=10)
-    assert any(e["event_id"] == ev_id for e in events)
+    with db._get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT count(*) FROM telemetry_events WHERE event_id = ?", (ev_id,))
+        count = cursor.fetchone()[0]
+    assert count == 1
+    events = db.get_telemetry_events(limit=50)
+    assert len(events) > 0
 
     # Check Stream Engine status
     publisher = get_stream_publisher()

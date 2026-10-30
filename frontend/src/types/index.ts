@@ -20,6 +20,10 @@ export interface NetworkInterface {
   name: string;
   description: string;
   addresses: string[];
+  id?: string;
+  alias?: string;
+  ip?: string | null;
+  is_active?: boolean;
 }
 
 export interface MetricsSummary {
@@ -81,6 +85,7 @@ export interface NetworkEvent {
   flow_id?: string;
   is_suspicious: boolean;
   detection_status: string;
+  data_source?: 'LIVE' | 'SIMULATION' | string;
 }
 
 export interface SecurityAlert {
@@ -168,3 +173,116 @@ export interface ResponseAction {
   expected_effect: string;
   dry_run_supported: boolean;
 }
+
+export interface ThreatMarker {
+  latitude: number;
+  longitude: number;
+  country: string;
+  country_code?: string;
+  city: string;
+  asn?: string;
+  org?: string;
+  source_ips: string[];
+  incident_ids?: string[];
+  categories: string[];
+  severity: string;
+  max_severity?: string;
+  total_packets?: number;
+  first_seen?: string;
+  last_seen?: string;
+  accuracy_km?: number;
+}
+
+export interface CountryIncidentSummary {
+  incident_id: string;
+  category: string;
+  severity: string;
+  source_ip: string;
+  timestamp?: string;
+  packets?: number;
+}
+
+export interface CountryAggregate {
+  country: string;
+  country_code?: string;
+  iso3?: string;
+  intensity_score: number;
+  incident_count: number;
+  unique_ips: number;
+  source_ips?: string[];
+  max_severity?: string;
+  top_category?: string;
+  severities?: Record<string, number>;
+  categories?: Record<string, number>;
+  recent_incidents?: CountryIncidentSummary[];
+}
+
+export interface ThreatActivityPoint {
+  time_bucket: string;
+  label: string;
+  total_events: number;
+  critical: number;
+  high: number;
+  medium: number;
+  low: number;
+}
+
+export interface LocalNetworkHost {
+  ip: string;
+  rfc_type?: string;
+  packet_count?: number;
+  categories: string[];
+  incidents: string[];
+  severity?: string;
+  status?: string;
+}
+
+export interface ThreatMapStatistics {
+  total_geolocated_sources: number;
+  countries_detected: number;
+  total_suspicious_events: number;
+  unlocated_source_ips: number;
+  high_critical_events: number;
+}
+
+export interface ThreatMapData {
+  status: string;
+  markers: ThreatMarker[];
+  country_aggregates: CountryAggregate[];
+  local_network: LocalNetworkHost[];
+  activity_timeline?: ThreatActivityPoint[];
+  disclaimer: string;
+  total_public_markers: number;
+  total_local_hosts: number;
+  total_incidents_analyzed: number;
+  statistics: ThreatMapStatistics;
+}
+
+export interface IpIntelligence {
+  ip: string;
+  is_public: boolean;
+  country?: string;
+  country_code?: string;
+  region?: string;
+  city?: string;
+  latitude?: number;
+  longitude?: number;
+  accuracy_km?: number;
+  accuracy_radius?: number;
+  asn?: string;
+  org?: string;
+  status: string;
+  rfc_designation?: string;
+}
+
+export interface CopilotExplanation {
+  provider: string;
+  summary: string;
+  mechanism: string;
+  threat_hypotheses: string;
+  recommended_actions: string;
+  confidence_score: number;
+  ai_disclaimer: string;
+  timeline?: { timestamp: string; event: string }[];
+}
+
