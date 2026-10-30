@@ -1,18 +1,12 @@
 {
-  "status": "RUNNING",
-  "collector_mode": "PCAP_REPLAY",
-  "host_id": "POWERHOUSE",
-  "interface": "default",
+  "status": "STOPPED",
+  "collector_mode": "LIVE_CAPTURE",
+  "interface": "4. \\Device\\NPF_{30B2A1A7-EFA2-4119-BBAF-AD7DA42BE173}",
   "bpf_filter": null,
-  "tshark_path": "C:\\Program Files\\Wireshark\\tshark.exe",
-  "tshark_version": "4.6.x (Npcap)",
-  "uptime_seconds": 0.2,
-  "packets_captured": 3,
+  "packets_captured": 0,
   "flows_transmitted": 0,
   "parsing_errors": 0,
-  "transmission_errors": 1,
-  "restart_count": 0,
-  "last_event_time": null,
-  "last_error": "Transmission notice: HTTP Error 404: Not Found",
-  "timestamp": "2026-10-28T23:07:21.779796"
+  "uptime_seconds": 1.0,
+  "last_event_time": "2026-10-29T12:21:46.548534",
+  "tshark_version": "4.6.x (Npcap)"
 }

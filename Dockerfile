@@ -5,6 +5,16 @@
 # ==============================================================================
 
 # ------------------------------------------------------------------------------
+# Stage 0: Node.js Frontend Builder (React + TypeScript + Vite)
+# ------------------------------------------------------------------------------
+FROM node:20-alpine AS frontend-builder
+WORKDIR /build
+COPY frontend/package*.json ./
+RUN npm install --legacy-peer-deps
+COPY frontend/ ./
+RUN npm run build
+
+# ------------------------------------------------------------------------------
 # Stage 1: Base Runtime & Dependency Layer
 # ------------------------------------------------------------------------------
 FROM python:3.12-slim AS base
@@ -40,8 +50,9 @@ COPY requirements.txt requirements-dev.txt ./
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements-dev.txt
 
-# Copy application source code
+# Copy application source code and compiled frontend
 COPY . .
+COPY --from=frontend-builder /build/dist /app/frontend/dist
 
 # Ensure storage directories exist with proper non-root ownership
 RUN mkdir -p /app/data /app/models && \
