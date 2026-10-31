@@ -36,9 +36,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { name: 'Live Network', path: '/live-network', icon: Activity },
     { name: 'Traffic Analytics', path: '/analytics', icon: BarChart3 },
     { name: 'Threat Intelligence', path: '/threat-intelligence', icon: Globe },
-    { name: 'Threat Detection', path: '/threats', icon: ShieldAlert },
-    { name: 'Security Alerts', path: '/alerts', icon: Bell, badge: openAlertsCount },
-    { name: 'Hosts and Connections', path: '/hosts', icon: Network },
+    { name: 'Alerts', path: '/alerts', icon: Bell, badge: openAlertsCount },
     { name: 'Incident Investigation', path: '/investigation', icon: Compass },
     { name: 'Model Insights', path: '/models', icon: Cpu },
     { name: 'Settings', path: '/settings', icon: Settings },
@@ -48,9 +46,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   return (
     <aside
-      className={`fixed top-0 left-0 z-30 h-screen transition-all duration-300 ease-in-out border-r border-slate-800/80 bg-[#0B0F19]/95 backdrop-blur-md flex flex-col justify-between ${
-        collapsed ? 'w-20' : 'w-64'
-      }`}
+      className={`fixed top-0 left-0 z-30 h-screen transition-all duration-300 ease-in-out border-r border-slate-800/80 bg-[#0B0F19]/95 backdrop-blur-md flex flex-col justify-between ${collapsed ? 'w-20' : 'w-64'
+        }`}
     >
       {/* Top Branding */}
       <div>
@@ -83,11 +80,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {/* Collector Live Pill in Sidebar */}
         <div className="px-3 pt-3">
           <div
-            className={`flex items-center gap-2 p-2 rounded-lg border text-xs font-medium transition-colors ${
-              isRunning
+            className={`flex items-center gap-2 p-2 rounded-lg border text-xs font-medium transition-colors ${isRunning
                 ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
                 : 'bg-slate-800/40 border-slate-700/40 text-slate-400'
-            }`}
+              }`}
           >
             <Radio className={`w-3.5 h-3.5 shrink-0 ${isRunning ? 'text-emerald-400 animate-pulse' : 'text-slate-500'}`} />
             {!collapsed && (
@@ -108,10 +104,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
               key={item.path}
               to={item.path}
               className={({ isActive }) =>
-                `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all group relative ${
-                  isActive
-                    ? 'bg-gradient-to-r from-cyan-500/15 to-transparent text-cyan-400 border-l-2 border-cyan-400 font-semibold'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all group relative ${isActive
+                  ? 'bg-gradient-to-r from-cyan-500/15 to-transparent text-cyan-400 border-l-2 border-cyan-400 font-semibold'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
                 }`
               }
             >
@@ -133,9 +128,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* Bottom Footer Status */}
       <div className="p-3 border-t border-slate-800/80">
         <div
-          className={`flex items-center gap-2 p-2 rounded-lg bg-slate-900/60 border border-slate-800 text-xs text-slate-400 ${
-            collapsed ? 'justify-center' : ''
-          }`}
+          className={`flex items-center gap-2 p-2 rounded-lg bg-slate-900/60 border border-slate-800 text-xs text-slate-400 ${collapsed ? 'justify-center' : ''
+            }`}
         >
           <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_#34d399]" />
           {!collapsed && (
