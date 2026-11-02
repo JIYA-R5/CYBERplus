@@ -5,10 +5,8 @@ import { Header } from './components/layout/Header';
 import { OverviewPage } from './pages/OverviewPage';
 import { LiveNetworkPage } from './pages/LiveNetworkPage';
 import { TrafficAnalyticsPage } from './pages/TrafficAnalyticsPage';
-import { ThreatDetectionPage } from './pages/ThreatDetectionPage';
 import { ThreatIntelligencePage } from './pages/ThreatIntelligencePage';
-import { SecurityAlertsPage } from './pages/SecurityAlertsPage';
-import { HostsPage } from './pages/HostsPage';
+import { AlertsPage } from './pages/AlertsPage';
 import { InvestigationPage } from './pages/InvestigationPage';
 import { ModelInsightsPage } from './pages/ModelInsightsPage';
 import { SettingsPage } from './pages/SettingsPage';
@@ -83,7 +81,7 @@ export const App: React.FC = () => {
 
   const handleSelectHost = (ip: string) => {
     setSelectedHostIp(ip);
-    navigate('/hosts');
+    navigate(`/alerts?tab=hosts&ip=${encodeURIComponent(ip)}`);
   };
 
   const handleNavigateToAlerts = () => {
@@ -105,9 +103,8 @@ export const App: React.FC = () => {
 
       {/* Main Layout Area */}
       <div
-        className={`flex-1 transition-all duration-300 flex flex-col ${
-          collapsed ? 'ml-20' : 'ml-64'
-        }`}
+        className={`flex-1 transition-all duration-300 flex flex-col ${collapsed ? 'ml-20' : 'ml-64'
+          }`}
       >
         {/* Top Header */}
         <Header
@@ -168,11 +165,17 @@ export const App: React.FC = () => {
               />
               <Route path="/threat-intelligence" element={<ThreatIntelligencePage />} />
               <Route path="/intrusion-prevention" element={<IntrusionPreventionPage />} />
-              <Route path="/threats" element={<ThreatDetectionPage />} />
-              <Route path="/alerts" element={<SecurityAlertsPage />} />
+              <Route
+                path="/alerts"
+                element={<AlertsPage initialHostIp={selectedHostIp} />}
+              />
+              <Route
+                path="/threats"
+                element={<AlertsPage defaultTab="threats" />}
+              />
               <Route
                 path="/hosts"
-                element={<HostsPage initialHostIp={selectedHostIp} />}
+                element={<AlertsPage defaultTab="hosts" initialHostIp={selectedHostIp} />}
               />
               <Route path="/investigation" element={<InvestigationPage />} />
               <Route path="/models" element={<ModelInsightsPage />} />
