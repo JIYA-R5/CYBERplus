@@ -174,23 +174,68 @@ export interface ResponseAction {
   dry_run_supported: boolean;
 }
 
+export interface LiveThreatEvent {
+  log_id: string;
+  incident_id?: string;
+  timestamp: string;
+  src_ip: string;
+  dst_ip: string;
+  src_port: number;
+  dst_port: number;
+  protocol: string;
+  packet_size: number;
+  category: string;
+  severity: string;
+  country?: string;
+  country_code?: string;
+  region?: string;
+  city?: string;
+  latitude?: number;
+  longitude?: number;
+  accuracy_km?: number;
+  ingestion_delay_ms: number;
+  alert_title?: string;
+}
+
+export interface AttackTrajectory {
+  source_lat: number;
+  source_lon: number;
+  target_lat: number;
+  target_lon: number;
+  source_ip: string;
+  target_ip: string;
+  category: string;
+  severity: string;
+}
+
 export interface ThreatMarker {
   latitude: number;
   longitude: number;
   country: string;
   country_code?: string;
+  region?: string;
   city: string;
   asn?: string;
   org?: string;
   source_ips: string[];
   incident_ids?: string[];
+  primary_incident_id?: string;
   categories: string[];
   severity: string;
   max_severity?: string;
+  heat_intensity: number;
   total_packets?: number;
   first_seen?: string;
   last_seen?: string;
   accuracy_km?: number;
+  accuracy_radius?: number;
+  target_ips?: string[];
+  recent_events?: LiveThreatEvent[];
+  is_new?: boolean;
+  is_blocked?: boolean;
+  firewall_rule_id?: string;
+  ips_action_id?: string;
+  blocked_expires_at?: string;
 }
 
 export interface CountryIncidentSummary {
@@ -251,6 +296,10 @@ export interface ThreatMapData {
   country_aggregates: CountryAggregate[];
   local_network: LocalNetworkHost[];
   activity_timeline?: ThreatActivityPoint[];
+  live_attack_ticker?: LiveThreatEvent[];
+  attack_trajectories?: AttackTrajectory[];
+  latest_ingestion_delay_ms?: number;
+  last_updated?: string;
   disclaimer: string;
   total_public_markers: number;
   total_local_hosts: number;
@@ -285,4 +334,64 @@ export interface CopilotExplanation {
   ai_disclaimer: string;
   timeline?: { timestamp: string; event: string }[];
 }
+
+// -----------------------------------------------------------------------------
+// IPS (Intrusion Prevention System) Types
+// -----------------------------------------------------------------------------
+export type IPSPreventionMode = 'MONITOR' | 'AUTOMATIC' | 'DISABLED';
+export type IPSActionStatus = 'VERIFIED' | 'MONITORED' | 'FAILED' | 'DISABLED' | 'REJECTED' | 'UNBLOCKED' | 'PENDING';
+
+export interface IPSMetrics {
+  prevention_mode: IPSPreventionMode;
+  ips_status: string;
+  total_threats_blocked: number;
+  currently_active_blocks: number;
+  pending_decisions: number;
+  successful_firewall_actions: number;
+  failed_firewall_actions: number;
+  expiring_blocks: number;
+  monitored_events: number;
+  timestamp: string;
+}
+
+export interface IPSSettings {
+  setting_id: number;
+  prevention_mode: IPSPreventionMode;
+  confidence_threshold: number;
+  default_block_duration: number;
+  maximum_block_duration: number;
+  maximum_active_blocks: number;
+  automatic_unblocking_enabled: number;
+  allow_private_network_blocks: number;
+  updated_at: string;
+}
+
+export interface IPSActionRecord {
+  action_id: string;
+  source_ip: string;
+  incident_id?: string;
+  detection_reason: string;
+  threat_category: string;
+  confidence: number;
+  action_type: string;
+  firewall_rule_id?: string;
+  action_status: IPSActionStatus;
+  created_at: string;
+  expires_at?: string;
+  verified_at?: string;
+  unblocked_at?: string;
+  error_message?: string;
+  geoip_country?: string;
+  geoip_city?: string;
+  geoip_country_code?: string;
+}
+
+export interface IPSAllowlistEntry {
+  entry_id: string;
+  ip_or_cidr: string;
+  description: string;
+  created_at: string;
+  enabled: number;
+}
+
 

@@ -1,12 +1,12 @@
 {
-  "status": "STOPPED",
+  "status": "RUNNING",
   "collector_mode": "LIVE_CAPTURE",
-  "interface": "Wi-Fi (10.10.213.36)",
+  "interface": "Wi-Fi (10.231.38.9)",
   "bpf_filter": null,
   "packets_captured": 0,
   "flows_transmitted": 0,
   "parsing_errors": 0,
   "uptime_seconds": 1.0,
-  "last_event_time": "2026-10-30T15:44:40.947852",
+  "last_event_time": "2026-11-02T18:43:12.925557",
   "tshark_version": "4.6.x (Npcap)"
 }

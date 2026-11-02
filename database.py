@@ -12,7 +12,7 @@ import datetime
 import os
 import re
 import threading
-from typing import Dict, Any, List, Optional, Union
+from typing import Dict, Any, List, Optional, Union, Tuple
 import pandas as pd
 
 
@@ -56,6 +56,10 @@ class DatabaseManager:
 
     def __init__(self, db_path: Optional[str] = None):
         target_env = os.environ.get("DATABASE_PATH") or os.environ.get("SENTINEL_DB_PATH")
+        # On Windows outside Docker, linux container paths like /app/... cause massive 950ms SMB/NetBIOS resolution timeouts
+        if target_env and os.name == "nt" and (target_env.startswith("/app/") or target_env.startswith("/data/")):
+            target_env = None
+
         if db_path is None:
             if target_env:
                 self.db_path = target_env
@@ -451,6 +455,80 @@ class DatabaseManager:
             )
             """)
 
+            # 13. IPS Prevention Actions Table
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS ips_actions (
+                action_id TEXT PRIMARY KEY,
+                source_ip TEXT NOT NULL,
+                incident_id TEXT,
+                detection_reason TEXT,
+                threat_category TEXT,
+                confidence REAL,
+                action_type TEXT NOT NULL,
+                firewall_rule_id TEXT,
+                action_status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                expires_at TEXT,
+                verified_at TEXT,
+                unblocked_at TEXT,
+                error_message TEXT
+            )
+            """)
+
+            # 14. IPS Allowlist Table
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS ips_allowlist (
+                entry_id TEXT PRIMARY KEY,
+                ip_or_cidr TEXT NOT NULL UNIQUE,
+                description TEXT,
+                created_at TEXT NOT NULL,
+                enabled INTEGER DEFAULT 1
+            )
+            """)
+
+            # 15. IPS Settings Table
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS ips_settings (
+                setting_id INTEGER PRIMARY KEY CHECK (setting_id = 1),
+                prevention_mode TEXT NOT NULL DEFAULT 'MONITOR',
+                confidence_threshold REAL NOT NULL DEFAULT 0.85,
+                default_block_duration INTEGER NOT NULL DEFAULT 15,
+                maximum_block_duration INTEGER NOT NULL DEFAULT 1440,
+                maximum_active_blocks INTEGER NOT NULL DEFAULT 50,
+                automatic_unblocking_enabled INTEGER NOT NULL DEFAULT 1,
+                allow_private_network_blocks INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL
+            )
+            """)
+
+            # Seed default IPS settings if empty
+            cursor.execute("SELECT COUNT(*) as count FROM ips_settings WHERE setting_id = 1")
+            if cursor.fetchone()["count"] == 0:
+                now_str = datetime.datetime.now().isoformat()
+                cursor.execute("""
+                INSERT INTO ips_settings (
+                    setting_id, prevention_mode, confidence_threshold, default_block_duration,
+                    maximum_block_duration, maximum_active_blocks, automatic_unblocking_enabled,
+                    allow_private_network_blocks, updated_at
+                ) VALUES (1, 'MONITOR', 0.85, 15, 1440, 50, 1, 0, ?)
+                """, (now_str,))
+
+            # Seed baseline default allowlist entries if empty
+            cursor.execute("SELECT COUNT(*) as count FROM ips_allowlist")
+            if cursor.fetchone()["count"] == 0:
+                now_str = datetime.datetime.now().isoformat()
+                default_entries = [
+                    (f"ALLOW-{uuid.uuid4().hex[:6].upper()}", "127.0.0.1/32", "Protected Localhost Loopback IPv4", now_str, 1),
+                    (f"ALLOW-{uuid.uuid4().hex[:6].upper()}", "::1/128", "Protected Localhost Loopback IPv6", now_str, 1),
+                    (f"ALLOW-{uuid.uuid4().hex[:6].upper()}", "192.168.1.1/32", "Default Local Network Gateway", now_str, 1),
+                    (f"ALLOW-{uuid.uuid4().hex[:6].upper()}", "1.1.1.1/32", "Cloudflare Public DNS Primary", now_str, 1),
+                    (f"ALLOW-{uuid.uuid4().hex[:6].upper()}", "8.8.8.8/32", "Google Public DNS Primary", now_str, 1)
+                ]
+                cursor.executemany("""
+                INSERT OR IGNORE INTO ips_allowlist (entry_id, ip_or_cidr, description, created_at, enabled)
+                VALUES (?, ?, ?, ?, ?)
+                """, default_entries)
+
             # Schema Migration for network_logs
             cursor.execute("PRAGMA table_info(network_logs)")
             existing_netlog_cols = {row["name"] for row in cursor.fetchall()}
@@ -482,9 +560,11 @@ class DatabaseManager:
                     cursor.execute(f"ALTER TABLE network_logs ADD COLUMN {col_name} {col_type}")
 
             # Indexes for performant filtering
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_incident_timestamp ON incidents(timestamp)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_incident_status ON incidents(status)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_incident_severity ON incidents(severity)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_incident_source ON incidents(source_ip)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_incident_category ON incidents(category)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_time ON audit_logs(timestamp)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_feedback_inc ON analyst_feedback(incident_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_blocks_status ON active_blocks(status)")
@@ -495,12 +575,18 @@ class DatabaseManager:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_netlogs_timestamp ON network_logs(timestamp)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_netlogs_created_at ON network_logs(created_at)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_netlogs_source_ip ON network_logs(source_ip)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_netlogs_protocol ON network_logs(protocol)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_netlogs_severity ON network_logs(severity)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_netlogs_detection_status ON network_logs(detection_status)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_netlogs_retention ON network_logs(retention_status, is_preserved, expires_at)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_netlogs_incident_id ON network_logs(incident_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_sysact_timestamp ON system_activity(timestamp)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_sysact_type ON system_activity(activity_type)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_ips_actions_status ON ips_actions(action_status)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_ips_actions_source ON ips_actions(source_ip)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_ips_actions_created ON ips_actions(created_at)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_ips_actions_expires ON ips_actions(expires_at)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_ips_allowlist_enabled ON ips_allowlist(enabled)")
             conn.commit()
 
     def get_ip_recurrence_count(self, source_ip: str) -> int:
@@ -640,6 +726,51 @@ class DatabaseManager:
                 pass
 
         return inc_id
+    def _format_incident_row(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        """Format and normalize incident record to provide seamless dual-compatibility with both legacy backend and frontend SOC dashboard."""
+        item = dict(row)
+        try:
+            if isinstance(item.get("destination_ports"), str):
+                item["destination_ports"] = json.loads(item["destination_ports"])
+        except Exception:
+            pass
+        try:
+            if isinstance(item.get("protocols"), str):
+                item["protocols"] = json.loads(item["protocols"])
+        except Exception:
+            pass
+
+        # Dual-compatibility aliases for frontend SecurityAlert contract
+        inc_id = item.get("incident_id") or item.get("id") or ""
+        item["alert_id"] = inc_id
+        item["incident_id"] = inc_id
+
+        cat = item.get("category") or "Suspicious Activity"
+        item["title"] = cat
+        item["category"] = cat
+
+        src = item.get("source_ip") or item.get("src_ip") or "0.0.0.0"
+        item["src_ip"] = src
+        item["source_ip"] = src
+
+        dst = item.get("destination_ip") or item.get("dst_ip") or "Internal Subnet"
+        item["dst_ip"] = dst
+        item["destination_ip"] = dst
+
+        ev = item.get("evidence") or item.get("explanation") or ""
+        item["explanation"] = ev
+        item["evidence"] = ev
+
+        if not item.get("detection_method"):
+            item["detection_method"] = "Rule-based heuristic"
+
+        # Standard UI Status mapping
+        st = item.get("status") or "New"
+        if str(st).lower() in ("open", "active"):
+            st = "New"
+        item["status"] = st
+
+        return item
 
     def get_incidents(
         self,
@@ -651,8 +782,11 @@ class DatabaseManager:
         query = "SELECT * FROM incidents WHERE 1=1"
         params = []
         if status_filter and status_filter != "All":
-            query += " AND status = ?"
-            params.append(status_filter)
+            if status_filter == "New":
+                query += " AND status IN ('New', 'Open', 'Active')"
+            else:
+                query += " AND status = ?"
+                params.append(status_filter)
         if severity_filter and severity_filter != "All":
             query += " AND severity = ?"
             params.append(severity_filter)
@@ -666,19 +800,7 @@ class DatabaseManager:
             cursor = conn.cursor()
             cursor.execute(query, params)
             rows = cursor.fetchall()
-            results = []
-            for r in rows:
-                item = dict(r)
-                try:
-                    item["destination_ports"] = json.loads(item["destination_ports"])
-                except Exception:
-                    pass
-                try:
-                    item["protocols"] = json.loads(item["protocols"]) if item.get("protocols") else ["TCP"]
-                except Exception:
-                    pass
-                results.append(item)
-            return results
+            return [self._format_incident_row(r) for r in rows]
 
     def get_incident_by_id(self, incident_id: str) -> Optional[Dict[str, Any]]:
         """Retrieve a specific incident by its unique identifier."""
@@ -687,17 +809,105 @@ class DatabaseManager:
             cursor.execute("SELECT * FROM incidents WHERE incident_id = ?", (incident_id,))
             row = cursor.fetchone()
             if row:
-                item = dict(row)
-                try:
-                    item["destination_ports"] = json.loads(item["destination_ports"])
-                except Exception:
-                    pass
-                try:
-                    item["protocols"] = json.loads(item["protocols"]) if item.get("protocols") else ["TCP"]
-                except Exception:
-                    pass
-                return item
+                return self._format_incident_row(row)
             return None
+
+    def find_active_incident(
+        self,
+        source_ip: str,
+        category_pattern: Optional[str] = None,
+        window_seconds: int = 300
+    ) -> Optional[Dict[str, Any]]:
+        """Find an active/open incident from the same source IP within a rolling time window."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            query = """
+            SELECT * FROM incidents 
+            WHERE source_ip = ? AND status IN ('Open', 'Active', 'New', 'Investigating')
+            ORDER BY last_seen DESC, timestamp DESC LIMIT 1
+            """
+            cursor.execute(query, (source_ip,))
+            row = cursor.fetchone()
+            if not row:
+                return None
+            item = dict(row)
+            last_seen = item.get("last_seen") or item.get("timestamp")
+            if last_seen:
+                try:
+                    dt = datetime.datetime.fromisoformat(str(last_seen).replace("Z", "+00:00")[:19])
+                    diff = (datetime.datetime.now() - dt).total_seconds()
+                    if abs(diff) > window_seconds:
+                        return None
+                except Exception:
+                    pass
+            return self._format_incident_row(item)
+
+    def update_incident_activity(
+        self,
+        incident_id: str,
+        port: Optional[int] = None,
+        protocol: Optional[str] = None,
+        packet_count: int = 1,
+        evidence_update: Optional[str] = None,
+        category_update: Optional[str] = None,
+        severity_update: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Incrementally update an active incident with newly observed packets/ports."""
+        existing = self.get_incident_by_id(incident_id)
+        if not existing:
+            return None
+
+        ports = existing.get("destination_ports") or []
+        if isinstance(ports, str):
+            try:
+                ports = json.loads(ports)
+            except Exception:
+                ports = []
+        if port and port not in ports:
+            ports.append(port)
+
+        protos = existing.get("protocols") or ["TCP"]
+        if isinstance(protos, str):
+            try:
+                protos = json.loads(protos)
+            except Exception:
+                protos = ["TCP"]
+        if protocol and protocol not in protos:
+            protos.append(protocol)
+
+        now_iso = datetime.datetime.now().isoformat()
+        new_event_count = int(existing.get("event_count", 1)) + packet_count
+        new_total_packets = int(existing.get("total_packets", 0)) + packet_count
+        new_evidence = evidence_update or existing.get("evidence", "")
+        new_cat = category_update or existing.get("category", "Suspicious Activity")
+        new_sev = severity_update or existing.get("severity", "Medium")
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+            UPDATE incidents SET
+                last_seen = ?,
+                event_count = ?,
+                total_packets = ?,
+                destination_ports = ?,
+                protocols = ?,
+                evidence = ?,
+                category = ?,
+                severity = ?
+            WHERE incident_id = ?
+            """, (
+                now_iso,
+                new_event_count,
+                new_total_packets,
+                json.dumps(ports),
+                json.dumps(protos),
+                new_evidence,
+                new_cat,
+                new_sev,
+                incident_id
+            ))
+            conn.commit()
+        return self.get_incident_by_id(incident_id)
 
     def get_incident(self, incident_id: str) -> Optional[Dict[str, Any]]:
         """Alias for get_incident_by_id."""
@@ -1868,6 +2078,8 @@ class DatabaseManager:
         Retrieves geolocated suspicious events stored in SQLite network_logs for Threat Map.
         Only returns suspicious logs with valid latitude and longitude. Excludes private IPs.
         """
+        if not time_range or not isinstance(time_range, str):
+            time_range = "24h"
         now_dt = datetime.datetime.now()
         delta_map = {
             "15m": datetime.timedelta(minutes=15),
@@ -1876,7 +2088,7 @@ class DatabaseManager:
             "7d": datetime.timedelta(days=7),
             "all": None
         }
-        delta = delta_map.get(time_range.lower())
+        delta = delta_map.get(str(time_range).lower())
         cutoff_iso = (now_dt - delta).isoformat() if delta else None
         cutoff_str = (now_dt - delta).strftime("%Y-%m-%d %H:%M:%S") if delta else None
 
@@ -2594,6 +2806,380 @@ class DatabaseManager:
                 """, (limit,))
             rows = cursor.fetchall()
             return [dict(r) for r in rows]
+
+    # --------------------------------------------------------------------------
+    # IPS (Intrusion Prevention System) Persistence & Governance Methods
+    # --------------------------------------------------------------------------
+    def get_ips_settings(self) -> Dict[str, Any]:
+        """Fetch current IPS configuration settings."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM ips_settings WHERE setting_id = 1")
+            row = cursor.fetchone()
+            if row:
+                return dict(row)
+            # Default fallback
+            return {
+                "setting_id": 1,
+                "prevention_mode": "MONITOR",
+                "confidence_threshold": 0.85,
+                "default_block_duration": 15,
+                "maximum_block_duration": 1440,
+                "maximum_active_blocks": 50,
+                "automatic_unblocking_enabled": 1,
+                "allow_private_network_blocks": 0,
+                "updated_at": datetime.datetime.now().isoformat()
+            }
+
+    def update_ips_settings(self, updates: Dict[str, Any]) -> Dict[str, Any]:
+        """Update configurable IPS settings with validation."""
+        valid_modes = {"MONITOR", "AUTOMATIC", "DISABLED"}
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            current = self.get_ips_settings()
+
+            mode = updates.get("prevention_mode", current.get("prevention_mode", "MONITOR")).upper()
+            if mode not in valid_modes:
+                mode = "MONITOR"
+
+            conf = float(updates.get("confidence_threshold", current.get("confidence_threshold", 0.85)))
+            conf = max(0.50, min(1.00, conf))
+
+            def_dur = int(updates.get("default_block_duration", current.get("default_block_duration", 15)))
+            def_dur = max(1, min(1440, def_dur))
+
+            max_dur = int(updates.get("maximum_block_duration", current.get("maximum_block_duration", 1440)))
+            max_dur = max(def_dur, min(10080, max_dur))
+
+            max_blocks = int(updates.get("maximum_active_blocks", current.get("maximum_active_blocks", 50)))
+            max_blocks = max(1, min(500, max_blocks))
+
+            auto_unblock = 1 if updates.get("automatic_unblocking_enabled", current.get("automatic_unblocking_enabled", 1)) else 0
+            allow_priv = 1 if updates.get("allow_private_network_blocks", current.get("allow_private_network_blocks", 0)) else 0
+            now_iso = datetime.datetime.now().isoformat()
+
+            cursor.execute("""
+            INSERT INTO ips_settings (
+                setting_id, prevention_mode, confidence_threshold, default_block_duration,
+                maximum_block_duration, maximum_active_blocks, automatic_unblocking_enabled,
+                allow_private_network_blocks, updated_at
+            ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(setting_id) DO UPDATE SET
+                prevention_mode = excluded.prevention_mode,
+                confidence_threshold = excluded.confidence_threshold,
+                default_block_duration = excluded.default_block_duration,
+                maximum_block_duration = excluded.maximum_block_duration,
+                maximum_active_blocks = excluded.maximum_active_blocks,
+                automatic_unblocking_enabled = excluded.automatic_unblocking_enabled,
+                allow_private_network_blocks = excluded.allow_private_network_blocks,
+                updated_at = excluded.updated_at
+            """, (mode, conf, def_dur, max_dur, max_blocks, auto_unblock, allow_priv, now_iso))
+            conn.commit()
+
+        return self.get_ips_settings()
+
+    def log_ips_action(self, action_data: Dict[str, Any]) -> str:
+        """
+        Record an IPS prevention decision into SQLite, including rejected, monitored,
+        verified, and failed actions.
+        """
+        action_id = action_data.get("action_id") or f"IPS-{uuid.uuid4().hex[:8].upper()}"
+        source_ip = str(action_data.get("source_ip", "0.0.0.0")).strip()
+        incident_id = action_data.get("incident_id")
+        reason = action_data.get("detection_reason", "Automated prevention decision")
+        category = action_data.get("threat_category", "Suspicious Activity")
+        confidence = float(action_data.get("confidence", 0.90))
+        action_type = action_data.get("action_type", "BLOCK")
+        fw_rule_id = action_data.get("firewall_rule_id")
+        status = action_data.get("action_status", "PENDING")
+        created_at = action_data.get("created_at") or datetime.datetime.now().isoformat()
+        expires_at = action_data.get("expires_at")
+        verified_at = action_data.get("verified_at")
+        unblocked_at = action_data.get("unblocked_at")
+        error_msg = action_data.get("error_message")
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+            INSERT OR REPLACE INTO ips_actions (
+                action_id, source_ip, incident_id, detection_reason, threat_category,
+                confidence, action_type, firewall_rule_id, action_status,
+                created_at, expires_at, verified_at, unblocked_at, error_message
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                action_id, source_ip, incident_id, reason, category,
+                confidence, action_type, fw_rule_id, status,
+                created_at, expires_at, verified_at, unblocked_at, error_msg
+            ))
+            conn.commit()
+
+        return action_id
+
+    def update_ips_action_status(
+        self,
+        action_id: str,
+        status: str,
+        verified_at: Optional[str] = None,
+        unblocked_at: Optional[str] = None,
+        error_message: Optional[str] = None
+    ) -> bool:
+        """Update status and timestamps for an IPS action."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            updates = ["action_status = ?"]
+            params = [status]
+            if verified_at is not None:
+                updates.append("verified_at = ?")
+                params.append(verified_at)
+            if unblocked_at is not None:
+                updates.append("unblocked_at = ?")
+                params.append(unblocked_at)
+            if error_message is not None:
+                updates.append("error_message = ?")
+                params.append(error_message)
+            params.append(action_id)
+
+            query = f"UPDATE ips_actions SET {', '.join(updates)} WHERE action_id = ?"
+            cursor.execute(query, tuple(params))
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def get_ips_actions(
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        status_filter: Optional[str] = None,
+        search: Optional[str] = None
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """Retrieve paginated IPS activity history with total count."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            conditions = []
+            params: List[Any] = []
+
+            if status_filter and status_filter.upper() != "ALL":
+                conditions.append("action_status = ?")
+                params.append(status_filter.upper())
+
+            if search:
+                s = f"%{search.strip()}%"
+                conditions.append("(source_ip LIKE ? OR threat_category LIKE ? OR detection_reason LIKE ? OR action_id LIKE ?)")
+                params.extend([s, s, s, s])
+
+            where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+
+            # Count total
+            cursor.execute(f"SELECT COUNT(*) as count FROM ips_actions {where_clause}", tuple(params))
+            total = int(cursor.fetchone()["count"])
+
+            # Fetch rows
+            query_params = list(params) + [limit, offset]
+            cursor.execute(f"""
+            SELECT * FROM ips_actions
+            {where_clause}
+            ORDER BY created_at DESC
+            LIMIT ? OFFSET ?
+            """, tuple(query_params))
+            rows = cursor.fetchall()
+            return [dict(r) for r in rows], total
+
+    def get_ips_action_by_id(self, action_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieve single IPS action record by ID."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM ips_actions WHERE action_id = ?", (action_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def get_active_ips_blocks(self) -> List[Dict[str, Any]]:
+        """Retrieve all currently active (VERIFIED) IPS firewall blocks."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+            SELECT * FROM ips_actions
+            WHERE action_status = 'VERIFIED' AND (unblocked_at IS NULL OR unblocked_at = '')
+            ORDER BY created_at DESC
+            """)
+            rows = cursor.fetchall()
+            return [dict(r) for r in rows]
+
+    def get_active_block_by_ip(self, ip: str) -> Optional[Dict[str, Any]]:
+        """Find if an IP currently has an active verified block."""
+        clean_ip = str(ip).strip()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+            SELECT * FROM ips_actions
+            WHERE source_ip = ? AND action_status = 'VERIFIED' AND (unblocked_at IS NULL OR unblocked_at = '')
+            ORDER BY created_at DESC LIMIT 1
+            """, (clean_ip,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def get_expired_ips_blocks(self) -> List[Dict[str, Any]]:
+        """Retrieve verified blocks whose expiration time is past current UTC/ISO time."""
+        now_iso = datetime.datetime.now().isoformat()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+            SELECT * FROM ips_actions
+            WHERE action_status = 'VERIFIED'
+              AND expires_at IS NOT NULL
+              AND expires_at <= ?
+              AND (unblocked_at IS NULL OR unblocked_at = '')
+            ORDER BY expires_at ASC
+            """, (now_iso,))
+            rows = cursor.fetchall()
+            return [dict(r) for r in rows]
+
+    def get_ips_allowlist(self) -> List[Dict[str, Any]]:
+        """Retrieve all configured IPS allowlist entries."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM ips_allowlist ORDER BY created_at DESC")
+            rows = cursor.fetchall()
+            return [dict(r) for r in rows]
+
+    def add_ips_allowlist_entry(self, ip_or_cidr: str, description: str = "") -> Dict[str, Any]:
+        """Add a new protected IP or CIDR block to the IPS allowlist."""
+        clean_entry = str(ip_or_cidr).strip()
+        import ipaddress
+        # Validate format
+        try:
+            if "/" in clean_entry:
+                net = ipaddress.ip_network(clean_entry, strict=False)
+                clean_entry = str(net)
+            else:
+                addr = ipaddress.ip_address(clean_entry)
+                clean_entry = f"{addr}/32" if addr.version == 4 else f"{addr}/128"
+        except ValueError as e:
+            raise ValueError(f"Invalid IP address or CIDR network: '{ip_or_cidr}' - {e}")
+
+        entry_id = f"ALLOW-{uuid.uuid4().hex[:6].upper()}"
+        now_iso = datetime.datetime.now().isoformat()
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+            INSERT OR REPLACE INTO ips_allowlist (entry_id, ip_or_cidr, description, created_at, enabled)
+            VALUES (?, ?, ?, ?, 1)
+            """, (entry_id, clean_entry, description or "Administrator Protected Entry", now_iso))
+            conn.commit()
+
+        return {
+            "entry_id": entry_id,
+            "ip_or_cidr": clean_entry,
+            "description": description,
+            "created_at": now_iso,
+            "enabled": 1
+        }
+
+    def remove_ips_allowlist_entry(self, entry_id: str) -> bool:
+        """Remove an entry from the IPS allowlist."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM ips_allowlist WHERE entry_id = ?", (entry_id,))
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def toggle_ips_allowlist_entry(self, entry_id: str, enabled: bool) -> bool:
+        """Enable or disable an IPS allowlist entry."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("UPDATE ips_allowlist SET enabled = ? WHERE entry_id = ?", (1 if enabled else 0, entry_id))
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def is_ip_in_ips_allowlist(self, ip_str: str) -> Tuple[bool, str]:
+        """
+        Check if an IP matches any enabled entry in the SQLite ips_allowlist.
+        Supports both single IPs and CIDR ranges.
+        """
+        import ipaddress
+        clean_ip = str(ip_str).strip()
+        try:
+            target_ip = ipaddress.ip_address(clean_ip)
+        except ValueError:
+            return True, f"Malformed IP '{ip_str}' is protected from containment."
+
+        entries = self.get_ips_allowlist()
+        for e in entries:
+            if not e.get("enabled", 1):
+                continue
+            entry_pattern = e.get("ip_or_cidr", "")
+            try:
+                if "/" in entry_pattern:
+                    net = ipaddress.ip_network(entry_pattern, strict=False)
+                    if target_ip in net:
+                        return True, f"IP matches allowlist subnet {entry_pattern} ({e.get('description', '')})"
+                else:
+                    addr = ipaddress.ip_address(entry_pattern)
+                    if target_ip == addr:
+                        return True, f"IP matches allowlist entry {entry_pattern} ({e.get('description', '')})"
+            except ValueError:
+                continue
+
+        return False, ""
+
+    def get_ips_metrics(self) -> Dict[str, Any]:
+        """Aggregate real-time metrics for IPS dashboard."""
+        now_iso = datetime.datetime.now().isoformat()
+        soon_iso = (datetime.datetime.now() + datetime.timedelta(minutes=5)).isoformat()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Mode
+            cursor.execute("SELECT prevention_mode FROM ips_settings WHERE setting_id = 1")
+            m_row = cursor.fetchone()
+            mode = m_row["prevention_mode"] if m_row else "MONITOR"
+
+            # Total blocked ever
+            cursor.execute("SELECT COUNT(*) as count FROM ips_actions WHERE action_type = 'BLOCK' AND action_status IN ('VERIFIED', 'UNBLOCKED')")
+            total_blocked = int(cursor.fetchone()["count"])
+
+            # Active verified blocks
+            cursor.execute("SELECT COUNT(*) as count FROM ips_actions WHERE action_status = 'VERIFIED' AND (unblocked_at IS NULL OR unblocked_at = '')")
+            active_blocks = int(cursor.fetchone()["count"])
+
+            # Pending
+            cursor.execute("SELECT COUNT(*) as count FROM ips_actions WHERE action_status = 'PENDING'")
+            pending = int(cursor.fetchone()["count"])
+
+            # Verified actions
+            cursor.execute("SELECT COUNT(*) as count FROM ips_actions WHERE action_status = 'VERIFIED'")
+            verified = int(cursor.fetchone()["count"])
+
+            # Failed actions
+            cursor.execute("SELECT COUNT(*) as count FROM ips_actions WHERE action_status = 'FAILED'")
+            failed = int(cursor.fetchone()["count"])
+
+            # Expiring soon (< 5 minutes)
+            cursor.execute("""
+            SELECT COUNT(*) as count FROM ips_actions
+            WHERE action_status = 'VERIFIED'
+              AND (unblocked_at IS NULL OR unblocked_at = '')
+              AND expires_at IS NOT NULL
+              AND expires_at <= ?
+              AND expires_at >= ?
+            """, (soon_iso, now_iso))
+            expiring_soon = int(cursor.fetchone()["count"])
+
+            # Monitored count
+            cursor.execute("SELECT COUNT(*) as count FROM ips_actions WHERE action_status = 'MONITORED'")
+            monitored = int(cursor.fetchone()["count"])
+
+            return {
+                "prevention_mode": mode,
+                "ips_status": "Active" if mode == "AUTOMATIC" else ("Monitoring" if mode == "MONITOR" else "Disabled"),
+                "total_threats_blocked": total_blocked,
+                "currently_active_blocks": active_blocks,
+                "pending_decisions": pending,
+                "successful_firewall_actions": verified,
+                "failed_firewall_actions": failed,
+                "expiring_blocks": expiring_soon,
+                "monitored_events": monitored,
+                "timestamp": now_iso
+            }
 
     def start_retention_cleanup_scheduler(self, interval_seconds: int = 300):
         """Starts background retention cleanup thread for this database instance."""

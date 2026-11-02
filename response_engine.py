@@ -8,6 +8,7 @@ and safe multi-stage administrative approval workflows.
 import datetime
 import ipaddress
 import os
+import uuid
 from typing import Dict, Any, List, Optional, Tuple
 
 # Built-in baseline allowlisted / protected network indicators
@@ -391,14 +392,29 @@ class ResponseEngine:
             )
             verification_status = "VERIFIED_DRY_RUN"
         else:
-            # Defensive safety guard: Live OS firewall modification is not implemented
-            result_str = "SIMULATION_ONLY_LIVE_NOT_IMPLEMENTED"
-            details_str = (
-                f"Live firewall enforcement is not implemented; simulation only. "
-                f"Defensive rule prepared for {safe_ip} ({rule_type}, {duration_minutes}m). "
-                f"Approved by {operator}. No changes were made to the operating system firewall."
+            # Real OS Windows Defender Firewall Enforcement
+            from firewall_manager import get_firewall_adapter
+            adapter = get_firewall_adapter()
+            action_tag = f"RESP-{uuid.uuid4().hex[:6].upper()}"
+            fw_res = adapter.block_ip(
+                ip=safe_ip,
+                action_id=action_tag,
+                reason=f"Administrator containment by {operator} (Incident {incident_id})"
             )
-            verification_status = "SIMULATION_ONLY_UNVERIFIED"
+            if fw_res.verified:
+                result_str = "FIREWALL_BLOCK_VERIFIED"
+                verification_status = "VERIFIED"
+                details_str = (
+                    f"Live Windows Defender Firewall rule {fw_res.rule_id} created and verified active for {safe_ip} "
+                    f"({rule_type}, {duration_minutes}m). Approved by {operator}."
+                )
+            else:
+                result_str = "FIREWALL_BLOCK_FAILED"
+                verification_status = "FAILED"
+                details_str = (
+                    f"Live Windows Defender Firewall rule creation failed for {safe_ip}: {fw_res.error_message}. "
+                    f"Approved by {operator}."
+                )
 
         audit_id = None
         block_id = None

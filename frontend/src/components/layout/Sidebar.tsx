@@ -15,6 +15,7 @@ import {
   ChevronRight,
   Radio,
   Globe,
+  ShieldCheck,
 } from 'lucide-react';
 import { CollectorStatus } from '../../types';
 
@@ -36,6 +37,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { name: 'Live Network', path: '/live-network', icon: Activity },
     { name: 'Traffic Analytics', path: '/analytics', icon: BarChart3 },
     { name: 'Threat Intelligence', path: '/threat-intelligence', icon: Globe },
+    { name: 'Intrusion Prevention', path: '/intrusion-prevention', icon: ShieldCheck },
     { name: 'Threat Detection', path: '/threats', icon: ShieldAlert },
     { name: 'Security Alerts', path: '/alerts', icon: Bell, badge: openAlertsCount },
     { name: 'Hosts and Connections', path: '/hosts', icon: Network },

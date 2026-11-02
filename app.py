@@ -65,6 +65,14 @@ st.markdown("""
         font-family: 'JetBrains Mono', monospace !important;
     }
 
+    /* Tactical Reticle Box Cursor (White default, Electric Cyan on hover across buttons) */
+    html, body, .stApp, * {
+        cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 28 28' fill='none'%3E%3Cpath d='M4 11V4H11M17 4H24V11M4 17V24H11M17 24H24V17' stroke='%23FFFFFF' stroke-width='2.4' stroke-linecap='square'/%3E%3Ccircle cx='14' cy='14' r='2.2' fill='%23FFFFFF'/%3E%3C/svg%3E") 14 14, auto !important;
+    }
+    button, a, [role="button"], .stButton > button, .stDownloadButton > button, [data-testid="stSidebarCollapseButton"] {
+        cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 28 28' fill='none'%3E%3Cpath d='M4 11V4H11M17 4H24V11M4 17V24H11M17 24H24V17' stroke='%2300F5FF' stroke-width='2.4' stroke-linecap='square'/%3E%3Ccircle cx='14' cy='14' r='2.2' fill='%2300F5FF'/%3E%3C/svg%3E") 14 14, pointer !important;
+    }
+
     /* Dark SOC Theme Colors */
     .stApp {
         background-color: #0B0F19 !important;

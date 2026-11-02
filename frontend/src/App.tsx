@@ -12,7 +12,9 @@ import { HostsPage } from './pages/HostsPage';
 import { InvestigationPage } from './pages/InvestigationPage';
 import { ModelInsightsPage } from './pages/ModelInsightsPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { IntrusionPreventionPage } from './pages/IntrusionPreventionPage';
 import { ErrorBoundary } from './components/common/ErrorBoundary';
+import { CustomCursor } from './components/common/CustomCursor';
 import { useWebSocket } from './hooks/useWebSocket';
 import { api } from './services/api';
 import { CollectorStatus, DataSource, TimeRange } from './types';
@@ -90,6 +92,9 @@ export const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-[#0B0F19] text-slate-100 flex">
+      {/* Tactical HUD Reticle Box Cursor */}
+      <CustomCursor />
+
       {/* Collapsible Left Sidebar */}
       <Sidebar
         collapsed={collapsed}
@@ -162,6 +167,7 @@ export const App: React.FC = () => {
                 element={<TrafficAnalyticsPage timeRange={timeRange} />}
               />
               <Route path="/threat-intelligence" element={<ThreatIntelligencePage />} />
+              <Route path="/intrusion-prevention" element={<IntrusionPreventionPage />} />
               <Route path="/threats" element={<ThreatDetectionPage />} />
               <Route path="/alerts" element={<SecurityAlertsPage />} />
               <Route

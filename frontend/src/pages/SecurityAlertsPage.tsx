@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Bell,
   Search,
@@ -15,12 +15,14 @@ import { SecurityAlert, Severity, AlertStatus } from '../types';
 import { SeverityBadge } from '../components/common/SeverityBadge';
 import { StatusBadge } from '../components/common/StatusBadge';
 import { AlertDetailDrawer } from '../components/alerts/AlertDetailDrawer';
+import { useWebSocket } from '../hooks/useWebSocket';
 
 export const SecurityAlertsPage: React.FC = () => {
   const [alerts, setAlerts] = useState<SecurityAlert[]>([]);
   const [totalAlerts, setTotalAlerts] = useState<number>(0);
   const [selectedAlert, setSelectedAlert] = useState<SecurityAlert | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
+  const isFetchingRef = useRef<boolean>(false);
 
   // Filters
   const [severityFilter, setSeverityFilter] = useState<string>('All');
@@ -29,9 +31,11 @@ export const SecurityAlertsPage: React.FC = () => {
   const [page, setPage] = useState<number>(0);
   const pageSize = 12;
 
-  const loadAlerts = async () => {
+  const loadAlerts = async (isInitial = false) => {
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
     try {
-      setLoading(true);
+      if (isInitial) setLoading(true);
       const res = await api.getAlerts({
         limit: 100,
         severity: severityFilter,
@@ -43,12 +47,30 @@ export const SecurityAlertsPage: React.FC = () => {
     } catch (err) {
       console.error('Failed to load alerts', err);
     } finally {
-      setLoading(false);
+      isFetchingRef.current = false;
+      if (isInitial) setLoading(false);
     }
   };
 
+  const handleLiveAlert = useCallback((incoming: SecurityAlert) => {
+    setAlerts((prev) => {
+      const idx = prev.findIndex((a) => a.alert_id === incoming.alert_id);
+      if (idx >= 0) {
+        const next = [...prev];
+        next[idx] = incoming;
+        return next;
+      }
+      return [incoming, ...prev];
+    });
+    setTotalAlerts((prev) => prev + 1);
+  }, []);
+
+  useWebSocket({ onAlert: handleLiveAlert });
+
   useEffect(() => {
-    loadAlerts();
+    loadAlerts(true);
+    const interval = setInterval(() => loadAlerts(false), 3000);
+    return () => clearInterval(interval);
   }, [severityFilter, statusFilter, searchQuery]);
 
   const paginated = alerts.slice(page * pageSize, (page + 1) * pageSize);
@@ -70,7 +92,7 @@ export const SecurityAlertsPage: React.FC = () => {
 
         <div className="flex items-center gap-3">
           <button
-            onClick={loadAlerts}
+            onClick={() => loadAlerts(true)}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-xs text-slate-300 hover:text-white"
           >
             <RefreshCw className="w-3.5 h-3.5" />

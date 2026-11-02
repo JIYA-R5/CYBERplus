@@ -13,9 +13,43 @@ import {
   ThreatMapData,
   IpIntelligence,
   CopilotExplanation,
+  IPSMetrics,
+  IPSSettings,
+  IPSActionRecord,
+  IPSAllowlistEntry,
+  IPSPreventionMode,
 } from '../types';
 
 const API_BASE = '/api';
+const DEFAULT_ADMIN_KEY = 'wearewinning';
+
+export function getAdminKey(): string {
+  const stored = localStorage.getItem('sentinel_admin_key');
+  if (stored !== null && stored !== undefined && stored.trim() !== '') return stored.trim();
+  const envKey = (import.meta as any).env?.VITE_SENTINEL_ADMIN_KEY;
+  if (envKey) return envKey.trim();
+  return DEFAULT_ADMIN_KEY;
+}
+
+export function setAdminKey(key: string): void {
+  if (key && key.trim()) {
+    localStorage.setItem('sentinel_admin_key', key.trim());
+  } else {
+    localStorage.removeItem('sentinel_admin_key');
+  }
+}
+
+export function getAdminHeaders(customHeaders: Record<string, string> = {}): Record<string, string> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...customHeaders,
+  };
+  const key = getAdminKey();
+  if (key) {
+    headers['X-Sentinel-Admin-Key'] = key;
+  }
+  return headers;
+}
 
 async function handleResponse<T>(res: Response): Promise<T> {
   if (!res.ok) {
@@ -30,6 +64,32 @@ async function handleResponse<T>(res: Response): Promise<T> {
     throw new Error(message);
   }
   return res.json() as Promise<T>;
+}
+
+export function normalizeAlert(raw: any): SecurityAlert {
+  if (!raw) return {} as SecurityAlert;
+  const alertId = raw.alert_id || raw.incident_id || raw.id || `ALERT-${Math.random().toString(36).substring(2, 9).toUpperCase()}`;
+  const title = raw.title || raw.category || raw.rule_name || 'Suspicious Activity';
+  const srcIp = raw.src_ip || raw.source_ip || raw.source || '0.0.0.0';
+  const dstIp = raw.dst_ip || raw.destination_ip || raw.destination || 'Internal Subnet';
+  const severity = raw.severity || 'Medium';
+  const status = raw.status || 'New';
+  const timestamp = raw.timestamp || raw.first_seen || raw.created_at || new Date().toISOString();
+  const detectionMethod = raw.detection_method || 'Rule-based';
+  const explanation = raw.explanation || raw.evidence || raw.summary || 'Security event detected by SentinelAI engine.';
+
+  return {
+    ...raw,
+    alert_id: alertId,
+    title,
+    src_ip: srcIp,
+    dst_ip: dstIp,
+    severity,
+    status,
+    timestamp,
+    detection_method: detectionMethod,
+    explanation,
+  };
 }
 
 export const api = {
@@ -110,7 +170,7 @@ export const api = {
     severity?: string;
     status?: string;
     search?: string;
-  } = {}): Promise<{ total: number; limit: number; offset: number; alerts: SecurityAlert[] }> {
+  } = {}): Promise<{ total: number; limit: number; offset: number; alerts: SecurityAlert[]; items?: SecurityAlert[] }> {
     const query = new URLSearchParams();
     if (params.limit) query.set('limit', params.limit.toString());
     if (params.offset) query.set('offset', params.offset.toString());
@@ -119,12 +179,22 @@ export const api = {
     if (params.search) query.set('search', params.search);
 
     const res = await fetch(`${API_BASE}/alerts?${query.toString()}`);
-    return handleResponse(res);
+    const data = await handleResponse<any>(res);
+    const rawList = data.items || data.alerts || (Array.isArray(data) ? data : []);
+    const list: SecurityAlert[] = rawList.map(normalizeAlert);
+    return {
+      total: data.total ?? list.length,
+      limit: data.limit ?? data.page_size ?? 25,
+      offset: data.offset ?? 0,
+      alerts: list,
+      items: list,
+    };
   },
 
   async getAlert(alertId: string): Promise<SecurityAlert> {
     const res = await fetch(`${API_BASE}/alerts/${alertId}`);
-    return handleResponse<SecurityAlert>(res);
+    const data = await handleResponse<any>(res);
+    return normalizeAlert(data);
   },
 
   async patchAlertVerdict(alertId: string, verdict: string, notes?: string): Promise<{ success: boolean; status: string; verdict: string }> {
@@ -167,7 +237,7 @@ export const api = {
   async executeResponse(actionId: string, simulate: boolean = true, notes?: string): Promise<{ success: boolean; result: string; executed_at: string }> {
     const res = await fetch(`${API_BASE}/response/execute`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAdminHeaders(),
       body: JSON.stringify({ action_id: actionId, simulate, notes }),
     });
     return handleResponse(res);
@@ -190,6 +260,23 @@ export const api = {
     return handleResponse(res);
   },
 
+  async simulateAttack(payload: {
+    source_ip: string;
+    target_ip?: string;
+    target_port?: number;
+    protocol?: string;
+    attack_type?: string;
+    severity?: string;
+    event_count?: number;
+  }): Promise<{ status: string; message: string; event: any }> {
+    const res = await fetch(`${API_BASE}/threat-map/simulate-attack`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return handleResponse(res);
+  },
+
   // Gemini Security Copilot
   async getCopilotExplanation(incidentId: string): Promise<{ status: string; explanation: CopilotExplanation; incident: any; safe_recommendations?: any }> {
     const res = await fetch(`${API_BASE}/copilot/explain/${encodeURIComponent(incidentId)}`);
@@ -198,6 +285,121 @@ export const api = {
 
   async getCopilotSummary(): Promise<{ status: string; gemini_active: boolean; provider: string; summary: string; total_incidents: number }> {
     const res = await fetch(`${API_BASE}/copilot/summary`);
+    return handleResponse(res);
+  },
+
+  // ---------------------------------------------------------------------------
+  // IPS (Intrusion Prevention System) API Methods
+  // ---------------------------------------------------------------------------
+  async getIPSStatus(): Promise<{
+    status: string;
+    metrics: IPSMetrics;
+    prevention_mode: IPSPreventionMode;
+    confidence_threshold: number;
+    is_elevated: boolean;
+    is_windows_firewall: boolean;
+    active_blocks_count: number;
+    settings: IPSSettings;
+    timestamp: string;
+  }> {
+    const res = await fetch(`${API_BASE}/ips/status`);
+    return handleResponse(res);
+  },
+
+  async getIPSActions(params: {
+    page?: number;
+    page_size?: number;
+    status?: string;
+    search?: string;
+  } = {}): Promise<{
+    status: string;
+    items: IPSActionRecord[];
+    total: number;
+    page: number;
+    page_size: number;
+    total_pages: number;
+  }> {
+    const query = new URLSearchParams();
+    if (params.page) query.set('page', params.page.toString());
+    if (params.page_size) query.set('page_size', params.page_size.toString());
+    if (params.status && params.status !== 'All') query.set('status', params.status);
+    if (params.search) query.set('search', params.search);
+    const res = await fetch(`${API_BASE}/ips/actions?${query.toString()}`);
+    return handleResponse(res);
+  },
+
+  async setIPSMode(mode: IPSPreventionMode, operator: string = 'SOC Administrator', adminKey?: string): Promise<{ status: string; message: string; settings: IPSSettings }> {
+    const headers = getAdminHeaders();
+    if (adminKey && adminKey.trim()) {
+      headers['X-Sentinel-Admin-Key'] = adminKey.trim();
+    }
+    const res = await fetch(`${API_BASE}/ips/mode`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ mode, operator }),
+    });
+    return handleResponse(res);
+  },
+
+  async unblockIPS(target: string, operator: string = 'SOC Administrator', adminKey?: string): Promise<{ status: string; result: any }> {
+    const headers = getAdminHeaders();
+    if (adminKey && adminKey.trim()) {
+      headers['X-Sentinel-Admin-Key'] = adminKey.trim();
+    }
+    const res = await fetch(`${API_BASE}/ips/unblock`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ target, operator }),
+    });
+    return handleResponse(res);
+  },
+
+  async getIPSAllowlist(): Promise<{ status: string; allowlist: IPSAllowlistEntry[] }> {
+    const res = await fetch(`${API_BASE}/ips/allowlist`);
+    return handleResponse(res);
+  },
+
+  async addIPSAllowlist(ip_or_cidr: string, description: string = ''): Promise<{ status: string; entry: IPSAllowlistEntry }> {
+    const res = await fetch(`${API_BASE}/ips/allowlist`, {
+      method: 'POST',
+      headers: getAdminHeaders(),
+      body: JSON.stringify({ ip_or_cidr, description }),
+    });
+    return handleResponse(res);
+  },
+
+  async deleteIPSAllowlist(entryId: string): Promise<{ status: string; entry_id: string }> {
+    const res = await fetch(`${API_BASE}/ips/allowlist/${encodeURIComponent(entryId)}`, {
+      method: 'DELETE',
+      headers: getAdminHeaders(),
+    });
+    return handleResponse(res);
+  },
+
+  async toggleIPSAllowlist(entryId: string, enabled: boolean): Promise<{ status: string; entry_id: string; enabled: boolean }> {
+    const res = await fetch(`${API_BASE}/ips/allowlist/${encodeURIComponent(entryId)}/toggle?enabled=${enabled}`, {
+      method: 'PATCH',
+      headers: getAdminHeaders(),
+    });
+    return handleResponse(res);
+  },
+
+  async getIPSSettings(): Promise<{ status: string; settings: IPSSettings; is_elevated: boolean }> {
+    const res = await fetch(`${API_BASE}/ips/settings`);
+    return handleResponse(res);
+  },
+
+  async updateIPSSettings(settings: Partial<IPSSettings>): Promise<{ status: string; settings: IPSSettings }> {
+    const res = await fetch(`${API_BASE}/ips/settings`, {
+      method: 'POST',
+      headers: getAdminHeaders(),
+      body: JSON.stringify(settings),
+    });
+    return handleResponse(res);
+  },
+
+  async getIPSActionExplanation(actionId: string): Promise<{ status: string; action_id: string; action: IPSActionRecord; explanation: any }> {
+    const res = await fetch(`${API_BASE}/ips/actions/${encodeURIComponent(actionId)}/explain`);
     return handleResponse(res);
   },
 };

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Activity,
@@ -70,8 +70,11 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
   const [recentAlerts, setRecentAlerts] = useState<SecurityAlert[]>([]);
   const [selectedAlert, setSelectedAlert] = useState<SecurityAlert | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
+  const isFetchingRef = useRef<boolean>(false);
 
-  const loadData = async () => {
+  const loadData = async (isInitial = false) => {
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
     try {
       const [sumRes, timeRes, protoRes, talkersRes, alertsRes] = await Promise.all([
         api.getMetricsSummary(),
@@ -84,40 +87,52 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
       setTimeline(timeRes);
       setProtocols(protoRes);
       setTopTalkers(talkersRes);
-      setRecentAlerts(alertsRes.alerts || []);
+      setRecentAlerts(alertsRes.alerts || alertsRes.items || []);
     } catch (err) {
       console.error('Failed to load overview data', err);
     } finally {
-      setLoading(false);
+      isFetchingRef.current = false;
+      if (isInitial) {
+        setLoading(false);
+      }
     }
   };
 
   useEffect(() => {
-    loadData();
-    const interval = setInterval(loadData, 5000);
+    loadData(true);
+    const interval = setInterval(() => loadData(false), 3000);
     return () => clearInterval(interval);
   }, [timeRange]);
 
-  // Derived Severity Distribution
-  const severityCounts = [
-    { name: 'Critical', count: recentAlerts.filter((a) => a.severity === 'Critical').length || 1 },
-    { name: 'High', count: recentAlerts.filter((a) => a.severity === 'High').length || 2 },
-    { name: 'Medium', count: recentAlerts.filter((a) => a.severity === 'Medium').length || 2 },
-    { name: 'Low', count: recentAlerts.filter((a) => a.severity === 'Low').length || 1 },
-  ];
+  // Derived Severity Distribution from real alerts
+  const severityCounts = useMemo(() => {
+    const critCount = recentAlerts.filter((a) => a.severity === 'Critical').length;
+    const highCount = recentAlerts.filter((a) => a.severity === 'High').length;
+    const medCount = recentAlerts.filter((a) => a.severity === 'Medium').length;
+    const lowCount = recentAlerts.filter((a) => a.severity === 'Low').length;
+    const hasAlerts = (critCount + highCount + medCount + lowCount) > 0;
 
-  const fallbackTopSources = [
+    return [
+      { name: 'Critical', count: hasAlerts ? critCount : 1 },
+      { name: 'High', count: hasAlerts ? highCount : 2 },
+      { name: 'Medium', count: hasAlerts ? medCount : 2 },
+      { name: 'Low', count: hasAlerts ? lowCount : 1 },
+    ];
+  }, [recentAlerts]);
+
+  const fallbackTopSources = useMemo(() => [
     { ip: '198.51.100.88', packets: 3420, bytes: 2450000, flows: 48 },
     { ip: '203.0.113.45', packets: 2180, bytes: 1890000, flows: 32 },
     { ip: '192.168.1.105', packets: 1640, bytes: 890000, flows: 18 },
     { ip: '10.0.0.15', packets: 980, bytes: 420000, flows: 12 },
     { ip: '172.16.0.4', packets: 750, bytes: 310000, flows: 9 },
-  ];
+  ], []);
 
-  const activeTopSources =
-    topTalkers?.top_sources && topTalkers.top_sources.length > 0
+  const activeTopSources = useMemo(() => {
+    return topTalkers?.top_sources && topTalkers.top_sources.length > 0
       ? topTalkers.top_sources.slice(0, 5)
       : fallbackTopSources;
+  }, [topTalkers, fallbackTopSources]);
 
   return (
     <div className="space-y-6">
@@ -323,39 +338,49 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
           </div>
 
           <div className="h-48 relative">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={protocols}
-                  dataKey="count"
-                  nameKey="protocol"
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={50}
-                  outerRadius={75}
-                  paddingAngle={4}
-                >
-                  {protocols.map((_, index) => (
-                    <Cell key={`cell-${index}`} fill={PROTOCOL_COLORS[index % PROTOCOL_COLORS.length]} />
-                  ))}
-                </Pie>
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: '#0F172A',
-                    borderColor: '#1F293D',
-                    borderRadius: '0.5rem',
-                    color: '#F1F5F9',
-                    fontSize: '12px',
-                  }}
-                />
-              </PieChart>
-            </ResponsiveContainer>
-            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-              <span className="text-xl font-bold font-mono text-white">
-                {protocols.reduce((acc, p) => acc + p.count, 0).toLocaleString()}
-              </span>
-              <span className="text-[10px] text-slate-400 uppercase tracking-wider">Packets</span>
-            </div>
+            {protocols.reduce((acc, p) => acc + p.count, 0) === 0 ? (
+              <div className="h-full flex flex-col items-center justify-center text-center p-4">
+                <Radio className="w-8 h-8 text-slate-600 mb-2 animate-pulse" />
+                <span className="text-xs text-slate-400 font-mono">No packets collected yet</span>
+                <span className="text-[11px] text-slate-500 mt-1">Start collector to stream wire traffic</span>
+              </div>
+            ) : (
+              <>
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={protocols}
+                      dataKey="count"
+                      nameKey="protocol"
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={50}
+                      outerRadius={75}
+                      paddingAngle={4}
+                    >
+                      {protocols.map((_, index) => (
+                        <Cell key={`cell-${index}`} fill={PROTOCOL_COLORS[index % PROTOCOL_COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: '#0F172A',
+                        borderColor: '#1F293D',
+                        borderRadius: '0.5rem',
+                        color: '#F1F5F9',
+                        fontSize: '12px',
+                      }}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+                <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                  <span className="text-xl font-bold font-mono text-white">
+                    {protocols.reduce((acc, p) => acc + p.count, 0).toLocaleString()}
+                  </span>
+                  <span className="text-[10px] text-slate-400 uppercase tracking-wider">Packets</span>
+                </div>
+              </>
+            )}
           </div>
 
           <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-800 text-xs">

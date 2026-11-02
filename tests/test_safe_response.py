@@ -97,8 +97,8 @@ def test_admin_approval_gate_for_live_execution(response_engine, temp_db):
         db_manager=temp_db
     )
     assert res_approved["execution_mode"] == "live"
-    assert res_approved["result"] == "SIMULATION_ONLY_LIVE_NOT_IMPLEMENTED"
-    assert "Live firewall enforcement is not implemented; simulation only" in res_approved["details"]
+    assert res_approved["result"] in ("FIREWALL_BLOCK_VERIFIED", "FIREWALL_BLOCK_FAILED")
+    assert "Live Windows Defender Firewall" in res_approved["details"]
 
 
 def test_permanent_block_privilege_safeguards(response_engine, temp_db):

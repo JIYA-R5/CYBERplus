@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { NetworkEvent, SecurityAlert } from '../types';
+import { normalizeAlert } from '../services/api';
 
 export type WSConnectionStatus = 'connected' | 'connecting' | 'disconnected' | 'error';
 
@@ -22,6 +23,8 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
   const alertsSocketRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isPausedRef = useRef<boolean>(false);
+  const pendingEventsRef = useRef<NetworkEvent[]>([]);
+  const batchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   isPausedRef.current = isPaused;
 
@@ -50,13 +53,28 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
           // Handle single event or batch of events
           const newEvents: NetworkEvent[] = Array.isArray(data) ? data : [data];
           if (newEvents.length > 0 && newEvents[0].timestamp) {
-            setLastEventTime(new Date());
-            setEvents((prev) => {
-              const combined = [...newEvents, ...prev];
-              return combined.slice(0, maxEvents);
-            });
-            if (onEvent) {
-              newEvents.forEach((evt) => onEvent(evt));
+            // Buffer events to decouple high-frequency network packets from React DOM diffing
+            pendingEventsRef.current.unshift(...newEvents);
+            if (pendingEventsRef.current.length > maxEvents) {
+              pendingEventsRef.current = pendingEventsRef.current.slice(0, maxEvents);
+            }
+
+            if (!batchTimerRef.current) {
+              batchTimerRef.current = setTimeout(() => {
+                batchTimerRef.current = null;
+                const batch = pendingEventsRef.current;
+                pendingEventsRef.current = [];
+                if (batch.length > 0) {
+                  setLastEventTime(new Date());
+                  setEvents((prev) => {
+                    const combined = [...batch, ...prev];
+                    return combined.slice(0, maxEvents);
+                  });
+                  if (onEvent) {
+                    batch.forEach((evt) => onEvent(evt));
+                  }
+                }
+              }, 200);
             }
           }
         } catch (err) {
@@ -79,9 +97,18 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
 
       wsAlerts.onmessage = (msg) => {
         try {
-          const alertData: SecurityAlert = JSON.parse(msg.data);
+          const raw = JSON.parse(msg.data);
+          const alertData: SecurityAlert = normalizeAlert(raw);
           if (alertData && alertData.alert_id) {
-            setAlerts((prev) => [alertData, ...prev.slice(0, 50)]);
+            setAlerts((prev) => {
+              const existingIndex = prev.findIndex((a) => a.alert_id === alertData.alert_id);
+              if (existingIndex >= 0) {
+                const updated = [...prev];
+                updated[existingIndex] = alertData;
+                return updated;
+              }
+              return [alertData, ...prev.slice(0, 49)];
+            });
             if (onAlert) {
               onAlert(alertData);
             }
@@ -114,6 +141,7 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
 
     return () => {
       if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+      if (batchTimerRef.current) clearTimeout(batchTimerRef.current);
       if (eventsSocketRef.current) {
         eventsSocketRef.current.close();
       }

@@ -1333,6 +1333,71 @@ class ThreatExplainer:
             "Immediate containment and log correlation are strongly advised to prevent lateral expansion or credential compromise."
         )
 
+    def explain_ips_action(self, action_record: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Produce a grounded, analytical explanation of an IPS prevention decision.
+        Explains why the IP was blocked or monitored, false-positive risk factors,
+        and recommended analyst verification procedures.
+        
+        CRITICAL GUARDRAIL: Gemini Copilot is strictly an analytical and explanatory
+        layer. It does NOT possess execution privileges, cannot execute firewall commands,
+        and cannot override deterministic IPS policies.
+        """
+        source_ip = action_record.get("source_ip", "0.0.0.0")
+        category = action_record.get("threat_category", "Suspicious Activity")
+        confidence = float(action_record.get("confidence", 0.90))
+        status = action_record.get("action_status", "UNKNOWN")
+        reason = action_record.get("detection_reason", "Detection heuristic match")
+        rule_id = action_record.get("firewall_rule_id", "N/A")
+
+        # Local deterministic baseline explanation
+        explanation = {
+            "source_ip": source_ip,
+            "category": category,
+            "confidence_score": round(confidence, 2),
+            "prevention_status": status,
+            "firewall_rule_id": rule_id,
+            "decision_summary": f"Deterministic IPS evaluated threat '{category}' from source {source_ip} (Confidence {confidence:.2f}). Status: {status}.",
+            "enforcement_mechanism": "Windows Defender Firewall inbound drop rule" if status in ("VERIFIED", "BLOCK") else "Passive monitoring & correlation",
+            "false_positive_factors": [
+                "Authorized internal vulnerability assessment or penetration test.",
+                "Public proxy or CGNAT gateway sharing IP across legitimate users.",
+                "Misconfigured administrative script performing rapid polling.",
+                "Transient network telemetry burst or asymmetric routing."
+            ],
+            "triage_recommendations": [
+                f"Verify DNS reverse lookup (PTR) and WHOIS ownership for {source_ip}.",
+                "Inspect target service authentication audit logs for credential spray indicators.",
+                "Check whether this host belongs to an approved organizational scanning tool.",
+                f"If confirmed benign, add {source_ip} to the IPS Allowlist and unblock."
+            ],
+            "gemini_disclaimer": "Gemini Copilot is an explanatory advisor only and cannot execute or alter firewall enforcement."
+        }
+
+        # If Gemini is active, enrich with LLM threat context
+        if self.is_gemini_active:
+            try:
+                prompt = (
+                    f"Explain this cybersecurity Intrusion Prevention System (IPS) event concisely in 3 sentences:\n"
+                    f"- Source IP: {source_ip}\n"
+                    f"- Category: {category}\n"
+                    f"- Detection Reason: {reason}\n"
+                    f"- Status: {status}\n"
+                    f"- Confidence: {confidence:.2f}\n"
+                    f"Highlight why this threat was contained, potential impact if unblocked, and 1 key verification tip."
+                )
+                response = self.model.generate_content(prompt)
+                if response and response.text:
+                    explanation["ai_summary"] = response.text.strip()
+                    explanation["provider"] = "Google Gemini Live AI"
+            except Exception as e:
+                logger.debug(f"Gemini IPS explanation call fallback: {e}")
+                explanation["provider"] = "Local Knowledge Base Fallback"
+        else:
+            explanation["provider"] = "Local Knowledge Base Fallback"
+
+        return explanation
+
 
 # Helper factory function
 _global_explainer = None
